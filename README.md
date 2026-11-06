@@ -142,7 +142,7 @@ Empty, `NaN`, `N/A`, `na` and `not collected` values become `missing: third part
 | `*_not_included.csv` | Batch samples not included, with the reason (`no taxid yet`, `Process ID not found in metadata`) and the name used for the ENA lookup |
 | `*_tol_checklist.log` | Taxid sources, conflicts, missing-value counts, date and coordinate problems, and a reconciliation (`included + not included = batch total`) |
 
-**Lat/lon:** samples without latitude and longitude still need splitting into a separate submission file, as described below.
+**Lat/lon:** `geographic location (latitude)` and `(longitude)` are optional in ERC000053. Their format rule accepts decimal degrees (max. 8 dp) or an INSDC missing-value term such as `missing: third party data`. The formatter writes that term for empty or unusable coordinates, so its CSV can be submitted as a single file with no lat/lon split.
 
 ## Sample Registration 
 
@@ -162,7 +162,11 @@ These are all done in R with the following R script: [sample_registration.R](htt
   - Step one: prepares metadata spreadsheet for ENA submission requirements by patching the spreadsheet with existing and registered tax IDs and checks for any missing (outputs `missing_taxIDs.csv`)
   - Step two: final checks and formatting for ENA submission. **Outputs:** **(1)** either a list of countries that are incorrectly spelled in the terminal or `character(0)` if all countries are named correctly, **(2)** a final csv of all of the final information (`sample_registration.csv`), **(3)** a TSV for submission online containing samples with lat/lon (`sample_registration.tsv`), and **(4)** a TSV for submission containing only samples without lat/lon (`sample_registration_nolatlon.tsv`).  
 
-**NOTE:** You will notice that at the end samples with no lat/lon metadata are parsed into a separate submission TSV file. This is because ENA treats lat/lon as mandatory fields if the header is present and therefore won't accept missing terms. 
+**NOTE:** You will notice that at the end samples with no lat/lon metadata are parsed into a separate submission TSV file. This is needed because `sample_registration.R` converts missing lat/lon values to `NA` and writes them as `NA`, which ENA's lat/lon format rule rejects. Latitude and longitude are not mandatory in ERC000053. Their format rule accepts decimal degrees (max. 8 dp) or an INSDC missing-value term, e.g. `missing: third party data`, `not collected` or `missing`:
+```
+(^[+-]?[0-9]+.?[0-9]{0,8}$)|(^not applicable$)|(^not collected$)|(^not provided$)|(^restricted access$)|(^missing: control sample$)|(^missing: sample group$)|(^missing: synthetic construct$)|(^missing: lab stock$)|(^missing: third party data$)|(^missing: data agreement established pre-2023$)|(^missing: endangered species$)|(^missing: human-identifiable$)|(^missing$)
+```
+If missing lat/lon are kept as one of these terms (as `01_tol_checklist_formatter.py` does), all samples can be submitted in a single file.
 
 Once the TSVs have been generated you will need to add the following line above the header row: 
 ```
