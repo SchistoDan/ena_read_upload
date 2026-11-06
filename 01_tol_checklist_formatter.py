@@ -33,6 +33,27 @@ WHERE EACH SAMPLE'S TAXID COMES FROM (first match wins)
 
 Disagreements between sources are logged.
 
+WHY A SAMPLE IS NOT INCLUDED (column 'reason' of *_not_included.csv)
+---------------------------------------------------------------------
+Each batch sample without a taxid gets the first reason that applies:
+  requested (non-species form) / requested (species form)
+        the name sent for minting is on a --request-form file; waiting for ENA
+  verification: confirmed_taxonomy empty
+        04 status MAN_VER_NAME_EMPTY, or the verified sheet has no confirmed name
+  possible homonym (04) / possible homonym (01)
+        MATCH_PHYLUM_UNCHECKED or TAXONOMIC_MISMATCH_HOMONYM, and not requested
+  ENA error (01/04)
+        API_ERROR status in 01 or 04
+  conflicting confirmed names
+        the original name maps to more than one confirmed name in the verified sheets
+  not on any request form   (only when --request-form files are given)
+  no taxid yet              (otherwise)
+  Process ID not found in metadata
+        has a taxid, but no row in the metadata file
+With --query-ena the lookup result is appended, e.g. '; ENA lookup: not found in ENA'.
+Note: not-included rows are per specimen, whereas species request forms list each
+name once, so the two counts are not expected to match.
+
 CHECKLIST FORMATTING
 --------------------
 - scientific_name and sample_description = ENA scientific name for the taxid
@@ -57,6 +78,10 @@ INPUTS (all CSV, TSV or XLSX)
   --ena1            01 *-ena_matches.csv (repeatable)
   --ena2            04 *-ena_matches.csv (optional, repeatable)
   --verified        manually verified sheet(s) given to 04 (optional, repeatable)
+  --request-form    taxid request TSV(s) submitted to ENA (optional, repeatable)
+  --ena1-status     any 01 output with ID + ena_status_1, e.g. the combined
+                    output (optional, repeatable)
+  --ena2-status     any 04 output with ID + ena_status_2 (optional, repeatable)
 
 OUTPUTS
 -------
@@ -346,11 +371,14 @@ def load_matches(files, taxid_col, name_col, status_col, label):
 
 def load_verified(files):
     """
-    Load manually verified sheets. Returns (by_id, by_name):
+    Load manually verified sheets. Returns (by_id, by_name, info):
       by_id   ID -> confirmed_taxonomy
       by_name original scientificName (lower case) -> confirmed_taxonomy (unique only)
+      info    {'empty_ids', 'empty_names', 'conflict_names'} used to explain
+              why a sample has no taxid
     """
     by_id, name_sets = {}, defaultdict(set)
+    empty_ids, empty_names = set(), set()
     for path in files or []:
         df = read_table(path)
         id_col = find_column(df, 'ID')
@@ -362,20 +390,98 @@ def load_verified(files):
         for _, row in df.iterrows():
             ct = clean(row[ct_col])
             if not ct or is_missing(ct):
+                if id_col and clean(row[id_col]):
+                    empty_ids.add(clean(row[id_col]))
+                if clean(row[sci_col]):
+                    empty_names.add(clean(row[sci_col]).lower())
                 continue
             if id_col and clean(row[id_col]):
                 by_id[clean(row[id_col])] = ct
             sci = clean(row[sci_col]).lower()
             if sci:
                 name_sets[sci].add(ct)
-    by_name = {}
+    by_name, conflict_names = {}, set()
     for sci, cts in name_sets.items():
         if len(cts) == 1:
             by_name[sci] = next(iter(cts))
         else:
+            conflict_names.add(sci)
             logger.warning(f"Verified sheets map '{sci}' to more than one confirmed name "
                            f"{sorted(cts)} - not used for specimens without their own row")
-    return by_id, by_name
+    info = {'empty_ids': empty_ids - set(by_id), 'empty_names': empty_names - set(name_sets),
+            'conflict_names': conflict_names}
+    return by_id, by_name, info
+
+
+def norm_name(name):
+    return ' '.join(clean(name).split()).lower()
+
+
+def load_request_forms(files):
+    """Return {normalised proposed_name: 'non-species form' | 'species form'}."""
+    names = {}
+    for path in files or []:
+        df = read_table(path)
+        name_col, type_col = find_column(df, 'proposed_name'), find_column(df, 'name_type')
+        if not name_col:
+            logger.error(f"{path} needs a 'proposed_name' column (taxid request form)")
+            sys.exit(1)
+        for _, row in df.iterrows():
+            name = norm_name(row[name_col])
+            if not name or name == 'proposed_name':
+                continue
+            name_type = clean(row[type_col]).lower() if type_col else ''
+            non_species = 'unidentified' in name_type or re.fullmatch(r'\S+ sp\. \S+', name)
+            names[name] = 'non-species form' if non_species else 'species form'
+        logger.info(f"Request form names loaded so far: {len(names)}")
+    return names
+
+
+def load_statuses(files, status_col, label):
+    """Return {ID: set of statuses} from any 01/04 output files."""
+    statuses = defaultdict(set)
+    for path in files or []:
+        df = read_table(path)
+        id_col, st_col = find_column(df, 'ID'), find_column(df, status_col)
+        if not id_col or not st_col:
+            logger.error(f"{path} needs 'ID' and '{status_col}' columns ({label} output)")
+            sys.exit(1)
+        for _, row in df.iterrows():
+            sid, status = clean(row[id_col]), clean(row[st_col])
+            if sid and status:
+                statuses[sid].add(status)
+    return statuses
+
+
+HOMONYM_STATUSES = {'MATCH_PHYLUM_UNCHECKED', 'TAXONOMIC_MISMATCH_HOMONYM'}
+
+
+def classify_reason(sid, sample, name, confirmed, verified_info, forms, status1, status2):
+    """
+    Explain why a sample has no taxid. Returns (reason, matched_form_name).
+    See 'WHY A SAMPLE IS NOT INCLUDED' in the module docstring.
+    """
+    sci = sample['scientificName']
+    candidates = [name, sci, confirmed]
+    if sample['level'] == 'non_species':
+        candidates.append(f"{sci} sp. {sid}")
+    for cand in candidates:
+        key = norm_name(cand) if cand else ''
+        if key and key in forms:
+            return f"requested ({forms[key]})", key
+    s1, s2 = status1.get(sid, set()), status2.get(sid, set())
+    if ('MAN_VER_NAME_EMPTY' in s2 or sid in verified_info['empty_ids']
+            or (not confirmed and sci.lower() in verified_info['empty_names'])):
+        return 'verification: confirmed_taxonomy empty', ''
+    if s2 & HOMONYM_STATUSES:
+        return 'possible homonym (04)', ''
+    if s1 & HOMONYM_STATUSES:
+        return 'possible homonym (01)', ''
+    if any(s.startswith('API_ERROR') for s in s1 | s2):
+        return 'ENA error (01/04)', ''
+    if not confirmed and sci.lower() in verified_info['conflict_names']:
+        return 'conflicting confirmed names', ''
+    return ('not on any request form' if forms else 'no taxid yet'), ''
 
 
 # ---------------------------------------------------------------------------
@@ -449,11 +555,15 @@ def candidate_name(sid, sample, verified_by_id, verified_by_name):
     return sample['scientificName']
 
 
-def resolve_taxids(batch, ena1, ena2, verified, ena_lookup):
-    """Return (resolved, pending, stats). resolved: ID -> (taxid, ena_name, source)."""
+def resolve_taxids(batch, ena1, ena2, verified, ena_lookup, forms, status1, status2):
+    """
+    Return (resolved, pending, stats).
+      resolved: ID -> (taxid, ena_name, source)
+      pending:  ID -> (reason, candidate name, queried 'yes'/'no', matched form name)
+    """
     ena1_by_id, _ = ena1
     ena2_by_id, ena2_by_name = ena2
-    verified_by_id, verified_by_name = verified
+    verified_by_id, verified_by_name, verified_info = verified
     resolved, pending, stats = {}, {}, Counter()
 
     for sid, sample in batch.items():
@@ -482,7 +592,9 @@ def resolve_taxids(batch, ena1, ena2, verified, ena_lookup):
             continue
 
         name = candidate_name(sid, sample, verified_by_id, verified_by_name)
+        lookup_note, queried = '', 'no'
         if ena_lookup is not None and name:
+            queried = 'yes'
             taxid, ena_name, problem = ena_lookup.lookup(name)
             if taxid and ' sp. ' in name and not ena_name.endswith(f" sp. {sid}"):
                 taxid, problem = '', f"ENA name '{ena_name}' does not end in ID {sid}"
@@ -490,9 +602,10 @@ def resolve_taxids(batch, ena1, ena2, verified, ena_lookup):
                 resolved[sid] = (taxid, ena_name, 'ENA v2 lookup')
                 stats['ENA v2 lookup'] += 1
                 continue
-            pending[sid] = (f"no taxid yet ({problem})", name, 'yes')
-        else:
-            pending[sid] = ('no taxid yet', name, 'no')
+            lookup_note = f"; ENA lookup: {problem}"
+        reason, form_name = classify_reason(sid, sample, name, confirmed, verified_info,
+                                            forms, status1, status2)
+        pending[sid] = (reason + lookup_note, name, queried, form_name)
     return resolved, pending, stats
 
 
@@ -588,6 +701,9 @@ def main():
     parser.add_argument('--ena1', required=True, action='append', help='01 *-ena_matches.csv (repeatable)')
     parser.add_argument('--ena2', action='append', default=[], help='04 *-ena_matches.csv (repeatable)')
     parser.add_argument('--verified', action='append', default=[], help='Manually verified sheet(s) given to 04 (repeatable)')
+    parser.add_argument('--request-form', action='append', default=[], help='Taxid request TSV(s) submitted to ENA, to explain pending samples (repeatable)')
+    parser.add_argument('--ena1-status', action='append', default=[], help='Any 01 output with ID + ena_status_1, e.g. the combined output (repeatable)')
+    parser.add_argument('--ena2-status', action='append', default=[], help='Any 04 output with ID + ena_status_2, e.g. the combined output (repeatable)')
     parser.add_argument('--query-ena', action='store_true', help='Look up still-pending samples on ENA suggest-for-submission v2')
     parser.add_argument('-p', '--project', required=True, help="Value for 'project name' (e.g. BGE)")
     parser.add_argument('-o', '--output', required=True, help='Output base path, e.g. ./out/BGE_batch1')
@@ -621,9 +737,13 @@ def main():
     ena1 = load_matches(args.ena1, 'ena_taxid_1', 'ena_scientificName_1', 'ena_status_1', '01')
     ena2 = load_matches(args.ena2, 'ena_taxid_2', 'ena_scientificName_2', 'ena_status_2', '04')
     verified = load_verified(args.verified)
+    forms = load_request_forms(args.request_form)
+    status1 = load_statuses(args.ena1_status, 'ena_status_1', '01')
+    status2 = load_statuses(args.ena2_status, 'ena_status_2', '04')
 
     lookup = EnaLookup() if args.query_ena else None
-    resolved, pending, source_stats = resolve_taxids(batch, ena1, ena2, verified, lookup)
+    resolved, pending, source_stats = resolve_taxids(batch, ena1, ena2, verified, lookup,
+                                                     forms, status1, status2)
 
     rows, not_found, stats = build_checklist(metadata, id_col, resolved, args.project, list(batch))
 
@@ -635,17 +755,22 @@ def main():
     not_included = []
     for sid, sample in batch.items():
         if sid in pending:
-            reason, name, queried = pending[sid]
+            reason, name, queried, form_name = pending[sid]
         elif sid in not_found:
-            reason, name, queried = 'Process ID not found in metadata', resolved[sid][1], ''
+            reason, name, queried, form_name = 'Process ID not found in metadata', resolved[sid][1], '', ''
         else:
             continue
+        status_text = '; '.join(
+            f"{label}: {', '.join(sorted(st[sid]))}" for label, st in (('01', status1), ('04', status2))
+            if st.get(sid))
         not_included.append({'sample_alias': sid, 'scientificName': sample['scientificName'],
                              'level': sample['level'], 'reason': reason,
-                             'candidate_name': name, 'queried_ena': queried})
+                             'candidate_name': name, 'queried_ena': queried,
+                             'status_01_04': status_text, '_form_name': form_name})
     with open(not_included_path, 'w', encoding='utf-8', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=['sample_alias', 'scientificName', 'level', 'reason',
-                                               'candidate_name', 'queried_ena'])
+                                               'candidate_name', 'queried_ena', 'status_01_04'],
+                                extrasaction='ignore')
         writer.writeheader()
         writer.writerows(not_included)
 
@@ -660,11 +785,24 @@ def main():
         logger.info(f"  {source}: {source_stats.get(source, 0)}")
     if source_stats.get('conflicting sources'):
         logger.info(f"  samples where sources disagreed (see warnings): {source_stats['conflicting sources']}")
-    reasons = Counter(r['reason'].split(' (')[0] for r in not_included)
+    reasons = Counter(r['reason'].split(';')[0] for r in not_included)
     logger.info(f"Checklist rows written: {len(rows)} -> {checklist_path}")
     logger.info(f"Not included: {len(not_included)} -> {not_included_path}")
     for reason, n in reasons.most_common():
-        logger.info(f"  {reason}: {n}")
+        line = f"  {reason}: {n}"
+        if reason.startswith('requested'):
+            unique = {r['_form_name'] for r in not_included if r['reason'].split(';')[0] == reason}
+            line += f" samples ({len(unique)} unique request-form names)"
+        logger.info(line)
+    if forms:
+        matched = {r['_form_name'] for r in not_included if r['_form_name']}
+        unmatched = sorted(set(forms) - matched)
+        logger.info(f"Request-form names not matched to a pending batch sample: {len(unmatched)} "
+                    f"of {len(forms)} (e.g. already have a taxid, edited on the form, or another batch)")
+        for name in unmatched[:50]:
+            logger.debug(name)
+        if unmatched:
+            logger.info(f"  first examples: {', '.join(unmatched[:10])}")
     logger.info(f"Reconciliation: {len(rows)} included + {len(not_included)} not included = "
                 f"{len(rows) + len(not_included)} (batch total {len(batch)})"
                 + ('' if len(rows) + len(not_included) == len(batch) else '  <-- MISMATCH'))

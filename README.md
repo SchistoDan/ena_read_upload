@@ -93,6 +93,9 @@ python 01_tol_checklist_formatter.py \
     --ena1 01_ena_check_species-ena_matches.csv \
     --ena2 04_ena_post_ver-ena_matches.csv \
     --verified 03_gbif_processor_manually_verify-complete.xlsx \
+    --request-form combined_request_form.tsv \
+    --ena1-status 01_ena_check_species.csv \
+    --ena2-status 04_ena_post_ver.csv \
     -p BGE \
     -o ./sample_registration/BGE_batch1 \
     --query-ena
@@ -108,6 +111,9 @@ python 01_tol_checklist_formatter.py \
 | `--ena2` | `04_post_ver_ena_check.py` `*-ena_matches.csv` (optional, repeatable) |
 | `--verified` | Manually verified sheet(s) used as 04 input (optional, repeatable). Maps each original name to its `confirmed_taxonomy` |
 | `--query-ena` | Look up samples still without a taxid on ENA `suggest-for-submission` (v2). This picks up taxids minted since the request forms were sent |
+| `--request-form` | Taxid request TSV(s) submitted to ENA (optional, repeatable). Used only to explain why samples have no taxid yet |
+| `--ena1-status` | Any 01 output with `ID` and `ena_status_1`, e.g. the combined output (optional, repeatable). Used to explain missing taxids |
+| `--ena2-status` | Any 04 output with `ID` and `ena_status_2`, e.g. the combined output (optional, repeatable). Used to explain missing taxids |
 | `-p` / `--project` | Value for `project name` (e.g. `BGE`) |
 | `-o` / `--output` | Output base path |
 
@@ -139,8 +145,22 @@ Empty, `NaN`, `N/A`, `na` and `not collected` values become `missing: third part
 | File | Contents |
 |---|---|
 | `*_tol_checklist.csv` | The checklist (UTF-8), one row per sample with a taxid |
-| `*_not_included.csv` | Batch samples not included, with the reason (`no taxid yet`, `Process ID not found in metadata`) and the name used for the ENA lookup |
+| `*_not_included.csv` | Batch samples not included, with the reason (see below), the name used for the ENA lookup and the raw 01/04 statuses |
 | `*_tol_checklist.log` | Taxid sources, conflicts, missing-value counts, date and coordinate problems, and a reconciliation (`included + not included = batch total`) |
+
+**Why a sample is not included** (`reason` column; the first that applies):
+
+| Reason | Meaning | What to do |
+|---|---|---|
+| `requested (non-species form)` / `requested (species form)` | The name sent for minting is on a `--request-form` file | Wait for ENA, then re-run with `--query-ena` |
+| `verification: confirmed_taxonomy empty` | 04 status `MAN_VER_NAME_EMPTY`, or the verified sheet has no confirmed name | Complete manual verification and re-run 04 |
+| `possible homonym (04)` / `possible homonym (01)` | `MATCH_PHYLUM_UNCHECKED` or `TAXONOMIC_MISMATCH_HOMONYM`, and the name was not requested | Check the taxon manually |
+| `ENA error (01/04)` | An `API_ERROR` status in 01 or 04 | Re-run that step |
+| `conflicting confirmed names` | The original name maps to more than one confirmed name in the verified sheets | Make the verified sheets agree |
+| `not on any request form` | No taxid, and the name is on none of the supplied request forms (shown as `no taxid yet` when no forms are given) | Check whether it was dropped from the forms |
+| `Process ID not found in metadata` | The sample has a taxid but no metadata row | Add it to the metadata |
+
+With `--query-ena`, the lookup result is added, e.g. `requested (species form); ENA lookup: not found in ENA`. The log counts samples per reason. For the `requested` reasons it also shows the number of unique request-form names. Not-included rows are per specimen, while species request forms list each name once, so the two totals are not expected to match.
 
 **Lat/lon:** `geographic location (latitude)` and `(longitude)` are optional in ERC000053. Their format rule accepts decimal degrees (max. 8 dp) or an INSDC missing-value term such as `missing: third party data`. The formatter writes that term for empty or unusable coordinates, so its CSV can be submitted as a single file with no lat/lon split.
 
