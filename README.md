@@ -78,44 +78,99 @@ With a guide on how to register available [here](https://ena-docs.readthedocs.io
 **7. Access to skim2mito outputs**
 - This is generated as part of the UKBOL Accelerated pipeline, where [skim2mito](https://github.com/o-william-white/skim2mito) was run on all samples, with outputs sent to a single parent directory called `skim2mito_outputs`
 
-## Sample Registration 
+## Building the checklist from taxid-minting outputs (`01_tol_checklist_formatter.py`)
 
-To register all samples - the metadata spreadsheet for all samples has to go through a series of clean-ups and checks: 
-- Patch spreadsheet with existing tax IDs
-- Patch spreadsheet with any registered tax IDs
-- Check for trailing whitespaces and tabs
-- Check for valid date and coordinate formatting
-- Check for valid country names
-- Check for valid species names (if registering new) - Manual assessment and correction of any discrepancies in nomenclature 
-- Check for valid tax IDs (if registering new) - In UKBOL Accelerated, tax IDs were searched with [taxid-minting](https://github.com/museomics/taxid-minting-process) and 476 new tax IDs were registered.
+For batches processed with the [taxid-minting workflow](https://github.com/museomics/taxid-minting-process), `01_tol_checklist_formatter.py` builds the Tree of Life checklist (ERC000053) automatically. It joins the original specimen metadata to each sample's ENA taxid. It writes one row per sample that has a taxid, and lists every other sample in the batch, with the reason, in a separate file.
 
-These are all done in R with the following R script: [sample_registration.R](https://github.com/museomics/ukbol_submissions/blob/main/sample_registration.R)
+**Requirements:** Python 3.8+ with `pandas`, `openpyxl` and `requests` (`pip install pandas openpyxl requests`).
 
-### This script is made up of 2 main steps:
+**Run:**
+```bash
+python 01_tol_checklist_formatter.py \
+    -m sample_metadata.csv \
+    --species 00_filter_taxonomy_out_species.csv \
+    --non-species 00_filter_taxonomy_out_non_species.csv \
+    --ena1 01_ena_check_species-ena_matches.csv \
+    --ena2 04_ena_post_ver-ena_matches.csv \
+    --verified 03_gbif_processor_manually_verify-complete.xlsx \
+    --request-form combined_request_form.tsv \
+    --ena1-status 01_ena_check_species.csv \
+    --ena2-status 04_ena_post_ver.csv \
+    -p BGE \
+    -o ./sample_registration/BGE_batch1 \
+    --query-ena
+```
 
-  - Step one: prepares metadata spreadsheet for ENA submission requirements by patching the spreadsheet with existing and registered tax IDs and checks for any missing (outputs `missing_taxIDs.csv`)
-  - Step two: final checks and formatting for ENA submission. **Outputs:** **(1)** either a list of countries that are incorrectly spelled in the terminal or `character(0)` if all countries are named correctly, **(2)** a final csv of all of the final information (`sample_registration.csv`), **(3)** a TSV for submission online containing samples with lat/lon (`sample_registration.tsv`), and **(4)** a TSV for submission containing only samples without lat/lon (`sample_registration_nolatlon.tsv`).  
+| Argument | Description |
+|---|---|
+| `-m` / `--metadata` | Original sample metadata (CSV/TSV/XLSX). It may also contain samples outside this batch, which are ignored |
+| `--id-col` | Metadata column holding the Process ID (default `Process ID`). This becomes `sample_alias` |
+| `--species` | `00_filter_taxonomy` species-level output. Defines the batch (repeatable) |
+| `--non-species` | `00_filter_taxonomy` genus-level and above output (optional, repeatable) |
+| `--ena1` | `01_ena_taxid_check.py` `*-ena_matches.csv` (repeatable) |
+| `--ena2` | `04_post_ver_ena_check.py` `*-ena_matches.csv` (optional, repeatable) |
+| `--verified` | Manually verified sheet(s) used as 04 input (optional, repeatable). Maps each original name to its `confirmed_taxonomy` |
+| `--query-ena` | Look up samples still without a taxid on ENA `suggest-for-submission` (v2). This picks up taxids minted since the request forms were sent |
+| `--request-form` | Taxid request TSV(s) submitted to ENA (optional, repeatable). Used only to explain why samples have no taxid yet |
+| `--ena1-status` | Any 01 output with `ID` and `ena_status_1`, e.g. the combined output (optional, repeatable). Used to explain missing taxids |
+| `--ena2-status` | Any 04 output with `ID` and `ena_status_2`, e.g. the combined output (optional, repeatable). Used to explain missing taxids |
+| `-p` / `--project` | Value for `project name` (e.g. `BGE`) |
+| `-o` / `--output` | Output base path |
 
-**NOTE:** You will notice that at the end samples with no lat/lon metadata are parsed into a separate submission TSV file. This is because ENA treats lat/lon as mandatory fields if the header is present and therefore won't accept missing terms. 
+**Where each sample's taxid comes from** (first match wins; disagreements are logged):
+1. The 01 ENA match for the sample's ID.
+2. The 04 ENA match for the sample's ID.
+3. The 04 ENA match for the sample's confirmed name. Verified sheets are usually reduced to one row per species, so the confirmed name's taxid is applied to every specimen of that species.
+4. With `--query-ena`: an exact, submittable match on ENA for the name that was sent for minting. That is the confirmed name, the original species name, or `Genus sp. {Process ID}` for genus-level samples. Ambiguous matches are not used.
 
-Once the TSVs have been generated you will need to add the following line above the header row: 
-```
-Checklist	ERC000053:1.6	Tree of Life Checklist
-```
-And this below the header row 
-```
-#units										DD	DD						
-```
-**OR** the following if lat/lon not included: 
-```
-#units															
-```
+**Field mapping:**
+
+| Checklist field | Source |
+|---|---|
+| tax_id, scientific_name, sample_description | ENA taxid and ENA scientific name |
+| sample_alias | Process ID |
+| sample_title | `Voucher: {specimen_voucher}; Sample ID: {Sample ID}` |
+| organism part, lifestage, collected_by, habitat, sex, specimen_voucher | the metadata column of the same name |
+| project name | `-p` |
+| collection date | `collection_date`, converted to `YYYY-MM-DD` (partial dates kept as `YYYY-MM` / `YYYY`) |
+| geographic location (latitude / longitude) | `latitude` / `longitude`, decimal degrees, max 8 dp, range-checked |
+| geographic location (region and locality) | `geographic_location_locality` |
+| geographic location (country and/or sea) | `geographic_location` |
+| collecting institution | `collecting_institution` |
+
+Empty, `NaN`, `N/A`, `na` and `not collected` values become `missing: third party data`. The mandatory fields (organism part, lifestage, project name, collected_by, collection date, region and locality, habitat, sex, country and/or sea, collecting institution) are never left blank. If a value, or a whole source column, is missing, the field is filled with `missing: third party data` and the fill is counted in the log. Unreadable dates and unusable coordinates are also written as `missing: third party data` and listed in the log.
+
+**Outputs:**
+
+| File | Contents |
+|---|---|
+| `*_tol_checklist.csv` | The checklist (UTF-8), one row per sample with a taxid |
+| `*_not_included.csv` | Batch samples not included, with the reason (see below), the name used for the ENA lookup and the raw 01/04 statuses |
+| `*_tol_checklist.log` | Taxid sources, conflicts, missing-value counts, date and coordinate problems, and a reconciliation (`included + not included = batch total`) |
+
+**Why a sample is not included** (`reason` column; the first that applies):
+
+| Reason | Meaning | What to do |
+|---|---|---|
+| `requested (non-species form)` / `requested (species form)` | The name sent for minting is on a `--request-form` file | Wait for ENA, then re-run with `--query-ena` |
+| `verification: confirmed_taxonomy empty` | 04 status `MAN_VER_NAME_EMPTY`, or the verified sheet has no confirmed name | Complete manual verification and re-run 04 |
+| `possible homonym (04)` / `possible homonym (01)` | `MATCH_PHYLUM_UNCHECKED` or `TAXONOMIC_MISMATCH_HOMONYM`, and the name was not requested | Check the taxon manually |
+| `ENA error (01/04)` | An `API_ERROR` status in 01 or 04 | Re-run that step |
+| `conflicting confirmed names` | The original name maps to more than one confirmed name in the verified sheets | Make the verified sheets agree |
+| `not on any request form` | No taxid, and the name is on none of the supplied request forms (shown as `no taxid yet` when no forms are given) | Check whether it was dropped from the forms |
+| `Process ID not found in metadata` | The sample has a taxid but no metadata row | Add it to the metadata |
+
+With `--query-ena`, the lookup result is added, e.g. `requested (species form); ENA lookup: not found in ENA`. The log counts samples per reason. For the `requested` reasons it also shows the number of unique request-form names. Not-included rows are per specimen, while species request forms list each name once, so the two totals are not expected to match.
+
+**Lat/lon:** `geographic location (latitude)` and `(longitude)` are optional in ERC000053. Their format rule accepts decimal degrees (max. 8 dp) or an INSDC missing-value term such as `missing: third party data`. The formatter writes that term for empty or unusable coordinates, so its CSV can be submitted as a single file with no lat/lon split.
+
+
 The TSV files are then ready for submission via the ENA Webin.
 
 <p align="center">
   <img src="https://github.com/museomics/ukbol_submissions/blob/main/img/ENA_sample_registration.png" width="400" height="300"
     alt="ENA Webin sample registration">
-</p
+</p>
 
 
 ## Sequencing read submission 
