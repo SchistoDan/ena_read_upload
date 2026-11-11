@@ -160,7 +160,15 @@ Empty, `NaN`, `N/A`, `na` and `not collected` values become `missing: third part
 | `not on any request form` | No taxid, and the name is on none of the supplied request forms (shown as `no taxid yet` when no forms are given) | Check whether it was dropped from the forms |
 | `Process ID not found in metadata` | The sample has a taxid but no metadata row | Add it to the metadata |
 
-With `--query-ena`, the lookup result is added, e.g. `requested (species form); ENA lookup: not found in ENA`. The log counts samples per reason. For the `requested` reasons it also shows the number of unique request-form names. Not-included rows are per specimen, while species request forms list each name once, so the two totals are not expected to match.
+With `--query-ena`, the lookup result is added, e.g. `requested (species form); ENA lookup: not found in ENA`.
+
+**Name trimming (matching only):** when matching samples to the request forms and looking names up on ENA, the script also tries a trimmed name:
+- qualifiers are removed: `cf.`, `aff.`, `nr.`, `s.l.`, `s.str.`, `sensu lato`, `agg.`, `complex`, `group`;
+- bracketed text is removed, e.g. `(Pennant, 1777)`;
+- trailing codes are dropped. For example, `Troglochthonius doratodactylus GP` matches `Troglochthonius doratodactylus`, and `Alvania aff. moerchii` matches `Alvania moerchii`;
+- a lower-case subspecies is kept. Names without a proper epithet, e.g. `Eunice sp2`, are not trimmed to a species.
+
+Form names written as `Genus sp. {ID}` are also matched by the ID, even if the genus was changed at verification. The `request_form_name` column shows the form name each sample was matched to. The registered `scientific_name` is always ENA's name for the taxid. The log counts samples per reason. For the `requested` reasons it also shows the number of unique request-form names. Not-included rows are per specimen, while species request forms list each name once, so the two totals are not expected to match.
 
 **Lat/lon:** `geographic location (latitude)` and `(longitude)` are optional in ERC000053. Their format rule accepts decimal degrees (max. 8 dp) or an INSDC missing-value term such as `missing: third party data`. The formatter writes that term for empty or unusable coordinates, so its CSV can be submitted as a single file with no lat/lon split.
 

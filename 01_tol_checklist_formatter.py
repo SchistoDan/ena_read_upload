@@ -33,6 +33,23 @@ WHERE EACH SAMPLE'S TAXID COMES FROM (first match wins)
 
 Disagreements between sources are logged.
 
+NAME TRIMMING (for matching only)
+---------------------------------
+Original names often carry qualifiers or codes that were removed before the
+name was requested (e.g. 'Troglochthonius doratodactylus GP' was requested as
+'Troglochthonius doratodactylus'). When matching samples to request forms and
+looking names up on ENA, the script also tries a trimmed name:
+  - removes qualifiers: cf., aff., nr., near, s.l., s.s., s.str., s.lat., sensu
+    lato/stricto, agg., complex, group, gr., grp. (with or without the full stop)
+  - removes bracketed text, e.g. authorities '(Pennant, 1777)' or '(nom. inval.)'
+  - keeps genus + epithet (+ a lower-case subspecies) and drops anything after,
+    e.g. population codes (GP, GB, SJ)
+  - names whose 'epithet' is not a proper lower-case word (e.g. 'Eunice sp2')
+    are not trimmed to a species
+The name registered in the checklist is always ENA's name for the taxid.
+Request-form names in the form 'Genus sp. {ID}' are also matched by the ID, so a
+sample is recognised even if its genus was changed at verification.
+
 WHY A SAMPLE IS NOT INCLUDED (column 'reason' of *_not_included.csv)
 ---------------------------------------------------------------------
 Each batch sample without a taxid gets the first reason that applies:
@@ -417,9 +434,41 @@ def norm_name(name):
     return ' '.join(clean(name).split()).lower()
 
 
+QUALIFIER_TOKENS = {'cf', 'aff', 'nr', 'near', 'sl', 's.l', 'ss', 's.s', 's.str', 'sstr', 's.lat',
+                    'slat', 'sensu', 'lato', 'stricto', 'agg', 'complex', 'group', 'gr', 'grp'}
+
+
+def trim_name(name):
+    """
+    Reduce a species name to genus + epithet (+ lower-case subspecies), dropping
+    qualifiers (cf., aff., s.l. ...), bracketed text and trailing codes.
+    Returns '' if no valid species name remains.
+    """
+    text = re.sub(r'\([^)]*\)', ' ', clean(name))
+    words = []
+    for token in text.split():
+        bare = token.strip('.,;:').lower()
+        if bare in QUALIFIER_TOKENS or token.lower().rstrip('.') in QUALIFIER_TOKENS:
+            continue
+        words.append(token.strip(',;:'))
+    if len(words) < 2 or not re.fullmatch(r'[A-Z][a-z]+(?:-[a-z]+)?', words[0]):
+        return ''
+    kept = [words[0]]
+    for word in words[1:3]:
+        if re.fullmatch(r'[a-z][a-z]+(?:-[a-z]+)*', word) and word not in ('sp', 'spp', 'var', 'subsp', 'ssp', 'f'):
+            kept.append(word)
+        else:
+            break
+    return ' '.join(kept) if len(kept) >= 2 else ''
+
+
 def load_request_forms(files):
-    """Return {normalised proposed_name: 'non-species form' | 'species form'}."""
-    names = {}
+    """
+    Return (names, by_id):
+      names  {normalised proposed_name: ('non-species form' | 'species form', name as written)}
+      by_id  {lower-case ID: normalised name} for names of the form 'Genus sp. {ID}'
+    """
+    names, by_id = {}, {}
     for path in files or []:
         df = read_table(path)
         name_col, type_col = find_column(df, 'proposed_name'), find_column(df, 'name_type')
@@ -427,14 +476,37 @@ def load_request_forms(files):
             logger.error(f"{path} needs a 'proposed_name' column (taxid request form)")
             sys.exit(1)
         for _, row in df.iterrows():
-            name = norm_name(row[name_col])
+            written = ' '.join(clean(row[name_col]).split())
+            name = written.lower()
             if not name or name == 'proposed_name':
                 continue
             name_type = clean(row[type_col]).lower() if type_col else ''
-            non_species = 'unidentified' in name_type or re.fullmatch(r'\S+ sp\. \S+', name)
-            names[name] = 'non-species form' if non_species else 'species form'
+            id_match = re.fullmatch(r'\S+ sp\. (\S+)', name)
+            non_species = 'unidentified' in name_type or id_match
+            names[name] = ('non-species form' if non_species else 'species form', written)
+            if id_match:
+                by_id[id_match.group(1)] = name
         logger.info(f"Request form names loaded so far: {len(names)}")
-    return names
+    return names, by_id
+
+
+def match_request_form(sid, sample, name, confirmed, forms, forms_by_id):
+    """
+    Find the request-form name this sample was requested under.
+    Tries the candidate, original and confirmed names (and 'Genus sp. ID' for
+    genus-level samples), then their trimmed versions, then a 'Genus sp. {ID}'
+    form name with this sample's ID. Returns the normalised form name or ''.
+    """
+    sci = sample['scientificName']
+    candidates = [name, sci, confirmed]
+    if sample['level'] == 'non_species':
+        candidates.append(f"{sci} sp. {sid}")
+    candidates += [trim_name(c) for c in candidates if c]
+    for cand in candidates:
+        key = norm_name(cand) if cand else ''
+        if key and key in forms:
+            return key
+    return forms_by_id.get(sid.lower(), '')
 
 
 def load_statuses(files, status_col, label):
@@ -456,19 +528,14 @@ def load_statuses(files, status_col, label):
 HOMONYM_STATUSES = {'MATCH_PHYLUM_UNCHECKED', 'TAXONOMIC_MISMATCH_HOMONYM'}
 
 
-def classify_reason(sid, sample, name, confirmed, verified_info, forms, status1, status2):
+def classify_reason(sid, sample, confirmed, verified_info, forms, form_key, status1, status2):
     """
     Explain why a sample has no taxid. Returns (reason, matched_form_name).
     See 'WHY A SAMPLE IS NOT INCLUDED' in the module docstring.
     """
     sci = sample['scientificName']
-    candidates = [name, sci, confirmed]
-    if sample['level'] == 'non_species':
-        candidates.append(f"{sci} sp. {sid}")
-    for cand in candidates:
-        key = norm_name(cand) if cand else ''
-        if key and key in forms:
-            return f"requested ({forms[key]})", key
+    if form_key:
+        return f"requested ({forms[form_key][0]})", form_key
     s1, s2 = status1.get(sid, set()), status2.get(sid, set())
     if ('MAN_VER_NAME_EMPTY' in s2 or sid in verified_info['empty_ids']
             or (not confirmed and sci.lower() in verified_info['empty_names'])):
@@ -556,6 +623,7 @@ def candidate_name(sid, sample, verified_by_id, verified_by_name):
 
 
 def resolve_taxids(batch, ena1, ena2, verified, ena_lookup, forms, status1, status2):
+    forms, forms_by_id = forms
     """
     Return (resolved, pending, stats).
       resolved: ID -> (taxid, ena_name, source)
@@ -592,19 +660,29 @@ def resolve_taxids(batch, ena1, ena2, verified, ena_lookup, forms, status1, stat
             continue
 
         name = candidate_name(sid, sample, verified_by_id, verified_by_name)
+        form_key = match_request_form(sid, sample, name, confirmed, forms, forms_by_id)
         lookup_note, queried = '', 'no'
         if ena_lookup is not None and name:
             queried = 'yes'
-            taxid, ena_name, problem = ena_lookup.lookup(name)
-            if taxid and ' sp. ' in name and not ena_name.endswith(f" sp. {sid}"):
-                taxid, problem = '', f"ENA name '{ena_name}' does not end in ID {sid}"
+            # Query the name as requested on the form first, then the candidate, then its trimmed form
+            query_names = []
+            for q in ((forms[form_key][1] if form_key else ''), name, trim_name(name)):
+                if q and q.lower() not in [x.lower() for x in query_names]:
+                    query_names.append(q)
+            taxid = ena_name = problem = ''
+            for q in query_names:
+                taxid, ena_name, problem = ena_lookup.lookup(q)
+                if taxid and ' sp. ' in q and not ena_name.endswith(f" sp. {sid}"):
+                    taxid, problem = '', f"ENA name '{ena_name}' does not end in ID {sid}"
+                if taxid:
+                    break
             if taxid:
                 resolved[sid] = (taxid, ena_name, 'ENA v2 lookup')
                 stats['ENA v2 lookup'] += 1
                 continue
             lookup_note = f"; ENA lookup: {problem}"
-        reason, form_name = classify_reason(sid, sample, name, confirmed, verified_info,
-                                            forms, status1, status2)
+        reason, form_name = classify_reason(sid, sample, confirmed, verified_info,
+                                            forms, form_key, status1, status2)
         pending[sid] = (reason + lookup_note, name, queried, form_name)
     return resolved, pending, stats
 
@@ -765,11 +843,14 @@ def main():
             if st.get(sid))
         not_included.append({'sample_alias': sid, 'scientificName': sample['scientificName'],
                              'level': sample['level'], 'reason': reason,
-                             'candidate_name': name, 'queried_ena': queried,
+                             'candidate_name': name,
+                             'request_form_name': forms[0][form_name][1] if form_name else '',
+                             'queried_ena': queried,
                              'status_01_04': status_text, '_form_name': form_name})
     with open(not_included_path, 'w', encoding='utf-8', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=['sample_alias', 'scientificName', 'level', 'reason',
-                                               'candidate_name', 'queried_ena', 'status_01_04'],
+                                               'candidate_name', 'request_form_name', 'queried_ena',
+                                               'status_01_04'],
                                 extrasaction='ignore')
         writer.writeheader()
         writer.writerows(not_included)
@@ -794,11 +875,11 @@ def main():
             unique = {r['_form_name'] for r in not_included if r['reason'].split(';')[0] == reason}
             line += f" samples ({len(unique)} unique request-form names)"
         logger.info(line)
-    if forms:
+    if forms[0]:
         matched = {r['_form_name'] for r in not_included if r['_form_name']}
-        unmatched = sorted(set(forms) - matched)
+        unmatched = sorted(set(forms[0]) - matched)
         logger.info(f"Request-form names not matched to a pending batch sample: {len(unmatched)} "
-                    f"of {len(forms)} (e.g. already have a taxid, edited on the form, or another batch)")
+                    f"of {len(forms[0])} (e.g. already have a taxid, edited on the form, or another batch)")
         for name in unmatched[:50]:
             logger.debug(name)
         if unmatched:
