@@ -105,7 +105,7 @@ python 01_tol_checklist_formatter.py \
 |---|---|
 | `-m` / `--metadata` | Original sample metadata (CSV/TSV/XLSX). It may also contain samples outside this batch, which are ignored |
 | `--id-col` | Metadata column holding the Process ID (default `Process ID`). This becomes `sample_alias` |
-| `--species` | `00_filter_taxonomy` species-level output. Defines the batch (repeatable) |
+| `--species` | `00_filter_taxonomy` species-level output. Defines the batch (repeatable). If an ID appears in more than one batch file (e.g. a sample re-run through 00), a species-level entry wins over a genus-level one, and otherwise the file given later wins |
 | `--non-species` | `00_filter_taxonomy` genus-level and above output (optional, repeatable) |
 | `--ena1` | `01_ena_taxid_check.py` `*-ena_matches.csv` (repeatable) |
 | `--ena2` | `04_post_ver_ena_check.py` `*-ena_matches.csv` (optional, repeatable) |
@@ -130,12 +130,13 @@ python 01_tol_checklist_formatter.py \
 | tax_id, scientific_name, sample_description | ENA taxid and ENA scientific name |
 | sample_alias | Process ID |
 | sample_title | `Voucher: {specimen_voucher}; Sample ID: {Sample ID}` |
-| organism part, lifestage, collected_by, habitat, sex, specimen_voucher | the metadata column of the same name |
+| organism part, collected_by, habitat, sex, specimen_voucher | the metadata column of the same name (`sex` is free text and kept as recorded) |
+| lifestage | `lifestage`, mapped to ENA's list (adult, egg, embryo, gametophyte, juvenile, larva, zygote, vegetative structure, vegetative cell, sporophyte, spore-bearing structure, pupa, not provided, not collected, not applicable). Variants are mapped: `Adult`, `a`, `flowering`, `Polyp`, `Medusa` and `Polygastric` → adult; `juvenil`, `Immature`, `Subadult` and `Tritonymph` → juvenile; `Larvae` and `metacercaria` → larva; `Pupae` → pupa. Other values become `missing: third party data` and are listed in the log |
 | project name | `-p` |
-| collection date | `collection_date`, converted to `YYYY-MM-DD` (partial dates kept as `YYYY-MM` / `YYYY`) |
+| collection date | `collection_date`, converted to `YYYY-MM-DD` (partial dates kept as `YYYY-MM` / `YYYY`). Unreadable dates, future dates and years before 1700 become `missing: third party data` and are listed in the log |
 | geographic location (latitude / longitude) | `latitude` / `longitude`, decimal degrees, max 8 dp, range-checked |
 | geographic location (region and locality) | `geographic_location_locality` |
-| geographic location (country and/or sea) | `geographic_location` |
+| geographic location (country and/or sea) | `geographic_location`, matched to ENA's country list. Variants are mapped: Turkiye → Turkey, North Atlantic Ocean → Atlantic Ocean, United States → USA, Cabo Verde → Cape Verde, Vietnam → Viet Nam, Aland → Finland, French Southern Territories → French Southern and Antarctic Lands. `Unspecified country`, `Unrecoverable` and `Exception - Zoological Park` → `missing: third party data`. Any other value not on the list is kept and listed in the log for correction |
 | collecting institution | `collecting_institution` |
 
 Empty, `NaN`, `N/A`, `na` and `not collected` values become `missing: third party data`. The mandatory fields (organism part, lifestage, project name, collected_by, collection date, region and locality, habitat, sex, country and/or sea, collecting institution) are never left blank. If a value, or a whole source column, is missing, the field is filled with `missing: third party data` and the fill is counted in the log. Unreadable dates and unusable coordinates are also written as `missing: third party data` and listed in the log.
@@ -145,8 +146,8 @@ Empty, `NaN`, `N/A`, `na` and `not collected` values become `missing: third part
 | File | Contents |
 |---|---|
 | `*_tol_checklist.csv` | The checklist (UTF-8), one row per sample with a taxid |
-| `*_not_included.csv` | Batch samples not included, with the reason (see below), the name used for the ENA lookup and the raw 01/04 statuses |
-| `*_tol_checklist.log` | Taxid sources, conflicts, missing-value counts, date and coordinate problems, and a reconciliation (`included + not included = batch total`) |
+| `*_not_included.csv` | Batch samples not included, with their Sample ID, the reason (see below), the name used for the ENA lookup, the matched request-form name and the raw 01/04 statuses |
+| `*_tol_checklist.log` | Taxid sources, conflicts, missing-value counts, lifestage and country changes, date and coordinate problems, and a reconciliation (`included + not included = batch total`) |
 
 **Why a sample is not included** (`reason` column; the first that applies):
 

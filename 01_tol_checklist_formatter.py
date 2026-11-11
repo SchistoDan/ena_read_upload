@@ -77,7 +77,20 @@ CHECKLIST FORMATTING
 - sample_alias = Process ID
 - sample_title = 'Voucher: {specimen_voucher}; Sample ID: {Sample ID}'
 - project name = --project
-- collection date -> ISO 8601 (YYYY-MM-DD; partial dates kept as YYYY-MM / YYYY)
+- collection date -> ISO 8601 (YYYY-MM-DD; partial dates kept as YYYY-MM / YYYY).
+  Unreadable or implausible dates (in the future, or before 1700) become
+  'missing: third party data' and are listed in the log.
+- lifestage -> ENA's controlled list (adult, egg, embryo, gametophyte, juvenile,
+  larva, zygote, vegetative structure, vegetative cell, sporophyte,
+  spore-bearing structure, pupa, not provided, not collected, not applicable).
+  Known variants are mapped (e.g. Adult/a/flowering/polyp/medusa -> adult;
+  immature/subadult/tritonymph -> juvenile; larvae/metacercaria -> larva;
+  pupae -> pupa); anything else becomes 'missing: third party data' and is logged.
+- geographic location (country and/or sea) -> ENA's country list. Known variants
+  are mapped (e.g. Turkiye -> Turkey, United States -> USA); placeholders such as
+  'Unspecified country' become 'missing: third party data'; any value still not
+  on ENA's list is kept as recorded and logged.
+- sex is free text and is kept as recorded.
 - latitude/longitude -> decimal degrees, max 8 dp, range-checked
 - Empty / NaN / N/A / na / none / not collected -> 'missing: third party data'
 - Mandatory fields (organism part, lifestage, project name, collected_by,
@@ -92,6 +105,9 @@ INPUTS (all CSV, TSV or XLSX)
   -m/--metadata     original sample metadata (may contain other samples too)
   --species         00_filter_taxonomy *_species.csv (defines batch, repeatable)
   --non-species     00_filter_taxonomy *_non_species.csv (optional, repeatable)
+                    If an ID appears in more than one batch file (e.g. a sample
+                    re-run through 00), a species-level entry wins over a
+                    genus-level one, and otherwise the file given later wins.
   --ena1            01 *-ena_matches.csv (repeatable)
   --ena2            04 *-ena_matches.csv (optional, repeatable)
   --verified        manually verified sheet(s) given to 04 (optional, repeatable)
@@ -103,7 +119,7 @@ INPUTS (all CSV, TSV or XLSX)
 OUTPUTS
 -------
   {output}_tol_checklist.csv    checklist, one row per included sample (UTF-8)
-  {output}_not_included.csv     batch samples not included, with reason
+  {output}_not_included.csv     batch samples not included, with reason and Sample ID
   {output}_tol_checklist.log    processing log and reconciliation
 
 USAGE
@@ -154,6 +170,85 @@ MANDATORY_COLUMNS = [
     'geographic location (region and locality)', 'habitat', 'sex',
     'geographic location (country and/or sea)', 'collecting institution',
 ]
+
+LIFESTAGE_VALUES = ['adult', 'egg', 'embryo', 'gametophyte', 'juvenile', 'larva', 'zygote',
+                    'vegetative structure', 'vegetative cell', 'sporophyte',
+                    'spore-bearing structure', 'pupa', 'not provided', 'not collected',
+                    'not applicable', MISSING]
+LIFESTAGE_MAP = {
+    'a': 'adult', 'adults': 'adult', 'flowering': 'adult', 'polyp': 'adult', 'medusa': 'adult',
+    'polygastric': 'adult',
+    'juvenil': 'juvenile', 'juveniles': 'juvenile', 'immature': 'juvenile', 'subadult': 'juvenile',
+    'sub-adult': 'juvenile', 'tritonymph': 'juvenile',
+    'larvae': 'larva', 'metacercaria': 'larva',
+    'pupae': 'pupa',
+    'female': MISSING, 'male': MISSING,
+}
+
+# ENA's accepted values for 'geographic location (country and/or sea)' (as in sample_registration.R)
+ENA_COUNTRIES = [
+    'Afghanistan', 'Albania', 'Algeria', 'American Samoa', 'Andorra', 'Angola', 'Anguilla',
+    'Antarctica', 'Antigua and Barbuda', 'Arctic Ocean', 'Argentina', 'Armenia', 'Aruba',
+    'Ashmore and Cartier Islands', 'Atlantic Ocean', 'Australia', 'Austria', 'Azerbaijan',
+    'Bahamas', 'Bahrain', 'Baker Island', 'Baltic Sea', 'Bangladesh', 'Barbados',
+    'Bassas da India', 'Belarus', 'Belgium', 'Belize', 'Benin', 'Bermuda', 'Bhutan', 'Bolivia',
+    'Borneo', 'Bosnia and Herzegovina', 'Botswana', 'Bouvet Island', 'Brazil',
+    'British Virgin Islands', 'Brunei', 'Bulgaria', 'Burkina Faso', 'Burundi', 'Cambodia',
+    'Cameroon', 'Canada', 'Cape Verde', 'Cayman Islands', 'Central African Republic', 'Chad',
+    'Chile', 'China', 'Christmas Island', 'Clipperton Island', 'Cocos Islands', 'Colombia',
+    'Comoros', 'Cook Islands', 'Coral Sea Islands', 'Costa Rica', "Cote d'Ivoire", 'Croatia',
+    'Cuba', 'Curacao', 'Cyprus', 'Czechia', 'Czech Republic',
+    'Democratic Republic of the Congo', 'Denmark', 'Djibouti', 'Dominica', 'Dominican Republic',
+    'Ecuador', 'Egypt', 'El Salvador', 'Equatorial Guinea', 'Eritrea', 'Estonia', 'Eswatini',
+    'Ethiopia', 'Europa Island', 'Falkland Islands (Islas Malvinas)', 'Faroe Islands', 'Fiji',
+    'Finland', 'France', 'French Guiana', 'French Polynesia',
+    'French Southern and Antarctic Lands', 'Gabon', 'Gambia', 'Gaza Strip', 'Georgia',
+    'Germany', 'Ghana', 'Gibraltar', 'Glorioso Islands', 'Greece', 'Greenland', 'Grenada',
+    'Guadeloupe', 'Guam', 'Guatemala', 'Guernsey', 'Guinea', 'Guinea-Bissau', 'Guyana', 'Haiti',
+    'Heard Island and McDonald Islands', 'Honduras', 'Hong Kong', 'Howland Island', 'Hungary',
+    'Iceland', 'India', 'Indian Ocean', 'Indonesia', 'Iran', 'Iraq', 'Ireland', 'Isle of Man',
+    'Israel', 'Italy', 'Jamaica', 'Jan Mayen', 'Japan', 'Jarvis Island', 'Jersey',
+    'Johnston Atoll', 'Jordan', 'Juan de Nova Island', 'Kazakhstan', 'Kenya',
+    'Kerguelen Archipelago', 'Kingman Reef', 'Kiribati', 'Kosovo', 'Kuwait', 'Kyrgyzstan',
+    'Laos', 'Latvia', 'Lebanon', 'Lesotho', 'Liberia', 'Libya', 'Liechtenstein', 'Line Islands',
+    'Lithuania', 'Luxembourg', 'Macau', 'Madagascar', 'Malawi', 'Malaysia', 'Maldives', 'Mali',
+    'Malta', 'Marshall Islands', 'Martinique', 'Mauritania', 'Mauritius', 'Mayotte',
+    'Mediterranean Sea', 'Mexico', 'Micronesia, Federated States of', 'Midway Islands',
+    'Moldova', 'Monaco', 'Mongolia', 'Montenegro', 'Montserrat', 'Morocco', 'Mozambique',
+    'Myanmar', 'Namibia', 'Nauru', 'Navassa Island', 'Nepal', 'Netherlands', 'New Caledonia',
+    'New Zealand', 'Nicaragua', 'Niger', 'Nigeria', 'Niue', 'Norfolk Island', 'North Korea',
+    'North Macedonia', 'North Sea', 'Northern Mariana Islands', 'Norway', 'Oman',
+    'Pacific Ocean', 'Pakistan', 'Palau', 'Palmyra Atoll', 'Panama', 'Papua New Guinea',
+    'Paracel Islands', 'Paraguay', 'Peru', 'Philippines', 'Pitcairn Islands', 'Poland',
+    'Portugal', 'Puerto Rico', 'Qatar', 'Republic of the Congo', 'Reunion', 'Romania',
+    'Ross Sea', 'Russia', 'Rwanda', 'Saint Barthelemy', 'Saint Helena', 'Saint Kitts and Nevis',
+    'Saint Lucia', 'Saint Pierre and Miquelon', 'Saint Vincent and the Grenadines', 'Samoa',
+    'San Marino', 'Saint Martin', 'Sao Tome and Principe', 'Saudi Arabia', 'Senegal', 'Serbia',
+    'Seychelles', 'Sierra Leone', 'Singapore', 'Sint Maarten', 'Slovakia', 'Slovenia',
+    'Solomon Islands', 'Somalia', 'South Africa',
+    'South Georgia and the South Sandwich Islands', 'South Korea', 'South Sudan',
+    'Southern Ocean', 'Spain', 'Spratly Islands', 'Sri Lanka', 'State of Palestine', 'Sudan',
+    'Suriname', 'Svalbard', 'Sweden', 'Switzerland', 'Syria', 'Taiwan', 'Tajikistan',
+    'Tanzania', 'Tasman Sea', 'Thailand', 'Timor-Leste', 'Togo', 'Tokelau', 'Tonga',
+    'Trinidad and Tobago', 'Tromelin Island', 'Tunisia', 'Turkey', 'Turkmenistan',
+    'Turks and Caicos Islands', 'Tuvalu', 'USA', 'Uganda', 'Ukraine', 'United Arab Emirates',
+    'United Kingdom', 'Uruguay', 'Uzbekistan', 'Vanuatu', 'Venezuela', 'Viet Nam',
+    'Wake Island', 'Virgin Islands', 'Wallis and Futuna', 'West Bank', 'Western Sahara',
+    'Yemen', 'Zambia', 'Zimbabwe', 'missing', 'missing: control sample',
+    'missing: data agreement established pre-2023', 'missing: endangered species',
+    'missing: human-identifiable', 'missing: lab stock', 'missing: sample group',
+    'missing: synthetic construct', 'missing: third party data', 'not applicable',
+    'not collected', 'not provided', 'restricted access',
+]
+COUNTRY_MAP = {
+    'turkiye': 'Turkey', 'türkiye': 'Turkey',
+    'north atlantic ocean': 'Atlantic Ocean', 'south atlantic ocean': 'Atlantic Ocean',
+    'united states': 'USA', 'united states of america': 'USA',
+    'cabo verde': 'Cape Verde', 'vietnam': 'Viet Nam', 'aland': 'Finland', 'åland': 'Finland',
+    'french southern territories': 'French Southern and Antarctic Lands',
+    'unspecified country': MISSING, 'unrecoverable': MISSING,
+    'exception - zoological park': MISSING,
+}
 
 # Checklist column -> metadata column (matched ignoring case, spaces and underscores)
 METADATA_SOURCES = {
@@ -308,6 +403,47 @@ def format_date(value):
     return MISSING, f"unrecognised date '{text}'"
 
 
+def check_date_plausible(formatted, original):
+    """Return (value, problem). Dates in the future or before 1700 become the missing term."""
+    if formatted.lower().startswith('missing'):
+        return formatted, None
+    today = date.today()
+    if int(formatted[:4]) < 1700:
+        return MISSING, f"implausible year in '{original}'"
+    limit = {10: today.isoformat(), 7: today.strftime('%Y-%m'), 4: str(today.year)}.get(len(formatted))
+    if limit and formatted > limit:
+        return MISSING, f"date in the future '{original}'"
+    return formatted, None
+
+
+def format_lifestage(value):
+    """Map a lifestage to ENA's controlled list. Returns (value, original_if_not_mappable)."""
+    text = normalise_value(value)
+    if text == MISSING:
+        return MISSING, None
+    key = text.lower()
+    if key in LIFESTAGE_VALUES:
+        return key, None
+    if key in LIFESTAGE_MAP:
+        return LIFESTAGE_MAP[key], None
+    return MISSING, text
+
+
+ENA_COUNTRY_LOOKUP = {c.lower(): c for c in ENA_COUNTRIES}
+
+
+def format_country(value):
+    """Map a country/sea to ENA's list. Returns (value, change_note_or_None, still_invalid)."""
+    text = normalise_value(value)
+    key = text.lower()
+    if key in COUNTRY_MAP:
+        return COUNTRY_MAP[key], f"'{text}' -> '{COUNTRY_MAP[key]}'", False
+    if key in ENA_COUNTRY_LOOKUP:
+        fixed = ENA_COUNTRY_LOOKUP[key]
+        return fixed, (f"'{text}' -> '{fixed}'" if fixed != text else None), False
+    return text, None, True
+
+
 def format_coordinate(value, limit):
     """Return (formatted_value, problem_or_None) for a decimal-degree coordinate."""
     text = clean(value)
@@ -342,10 +478,16 @@ def load_batch(species_files, non_species_files):
                 sid = clean(row[id_col])
                 if not sid:
                     continue
+                entry = {'scientificName': clean(row[name_col]), 'level': level}
                 if sid in batch:
-                    logger.warning(f"ID {sid} appears more than once in the batch files - first kept")
-                    continue
-                batch[sid] = {'scientificName': clean(row[name_col]), 'level': level}
+                    old = batch[sid]
+                    if old['level'] == 'species' and level == 'non_species':
+                        logger.warning(f"ID {sid} is in a species file ('{old['scientificName']}') and a "
+                                       f"non-species file ('{entry['scientificName']}') - species entry kept")
+                        continue
+                    logger.warning(f"ID {sid} appears more than once in the batch files - "
+                                   f"'{old['scientificName']}' replaced by '{entry['scientificName']}' from {path}")
+                batch[sid] = entry
     return batch
 
 
@@ -718,6 +860,7 @@ def build_checklist(metadata, id_col, resolved, project, batch_order):
 
     rows, not_found = [], []
     missing_fills, date_fixes, coord_fixes = Counter(), [], []
+    lifestage_unmapped, country_changes, country_invalid = Counter(), Counter(), Counter()
     for sid in batch_order:
         if sid not in resolved:
             continue
@@ -733,13 +876,25 @@ def build_checklist(metadata, id_col, resolved, project, batch_order):
 
         out = {'tax_id': taxid, 'scientific_name': ena_name, 'sample_alias': sid,
                'sample_description': ena_name, 'project name': project}
-        for col in ('organism part', 'lifestage', 'collected_by',
-                    'geographic location (region and locality)',
-                    'geographic location (country and/or sea)', 'habitat', 'sex',
+        for col in ('organism part', 'collected_by',
+                    'geographic location (region and locality)', 'habitat', 'sex',
                     'collecting institution', 'specimen_voucher'):
             out[col] = normalise_value(get(col))
 
-        out['collection date'], problem = format_date(get('collection date'))
+        out['lifestage'], unmapped = format_lifestage(get('lifestage'))
+        if unmapped:
+            lifestage_unmapped[unmapped] += 1
+        out['geographic location (country and/or sea)'], change, invalid = format_country(
+            get('geographic location (country and/or sea)'))
+        if change:
+            country_changes[change] += 1
+        if invalid:
+            country_invalid[out['geographic location (country and/or sea)']] += 1
+
+        raw_date = get('collection date')
+        out['collection date'], problem = format_date(raw_date)
+        if not problem:
+            out['collection date'], problem = check_date_plausible(out['collection date'], clean(raw_date))
         if problem:
             date_fixes.append(f"{sid}: {problem}")
         for col, limit in (('geographic location (latitude)', 90), ('geographic location (longitude)', 180)):
@@ -757,8 +912,12 @@ def build_checklist(metadata, id_col, resolved, project, batch_order):
                 missing_fills[col] += 1
         rows.append(out)
 
+    sample_ids = {sid: (normalise_value(row[sample_id_col]) if sample_id_col else MISSING)
+                  for sid, row in meta_rows.items()}
     stats = {'missing_fills': missing_fills, 'date_fixes': date_fixes,
              'coord_fixes': coord_fixes, 'metadata_rows': len(meta_rows),
+             'lifestage_unmapped': lifestage_unmapped, 'country_changes': country_changes,
+             'country_invalid': country_invalid, 'sample_ids': sample_ids,
              'outside_batch': len(set(meta_rows) - set(batch_order))}
     return rows, not_found, stats
 
@@ -841,14 +1000,16 @@ def main():
         status_text = '; '.join(
             f"{label}: {', '.join(sorted(st[sid]))}" for label, st in (('01', status1), ('04', status2))
             if st.get(sid))
-        not_included.append({'sample_alias': sid, 'scientificName': sample['scientificName'],
+        not_included.append({'sample_alias': sid,
+                             'Sample ID': stats['sample_ids'].get(sid, 'Process ID not found in metadata'),
+                             'scientificName': sample['scientificName'],
                              'level': sample['level'], 'reason': reason,
                              'candidate_name': name,
                              'request_form_name': forms[0][form_name][1] if form_name else '',
                              'queried_ena': queried,
                              'status_01_04': status_text, '_form_name': form_name})
     with open(not_included_path, 'w', encoding='utf-8', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['sample_alias', 'scientificName', 'level', 'reason',
+        writer = csv.DictWriter(f, fieldnames=['sample_alias', 'Sample ID', 'scientificName', 'level', 'reason',
                                                'candidate_name', 'request_form_name', 'queried_ena',
                                                'status_01_04'],
                                 extrasaction='ignore')
@@ -891,8 +1052,22 @@ def main():
     for col in MANDATORY_COLUMNS:
         if col != 'project name':
             logger.info(f"  {col}: {stats['missing_fills'].get(col, 0)}")
+    if stats['lifestage_unmapped']:
+        logger.info(f"Lifestage values not on ENA's list ({sum(stats['lifestage_unmapped'].values())}) "
+                    f"- written as '{MISSING}':")
+        for value, n in stats['lifestage_unmapped'].most_common():
+            logger.info(f"  '{value}': {n}")
+    if stats['country_changes']:
+        logger.info(f"Country values changed to ENA's list ({sum(stats['country_changes'].values())}):")
+        for change, n in stats['country_changes'].most_common():
+            logger.info(f"  {change}: {n}")
+    if stats['country_invalid']:
+        logger.info(f"Country values still not on ENA's list ({sum(stats['country_invalid'].values())}) "
+                    f"- kept as recorded, please correct:")
+        for value, n in stats['country_invalid'].most_common():
+            logger.info(f"  '{value}': {n}")
     if stats['date_fixes']:
-        logger.info(f"Collection dates not converted ({len(stats['date_fixes'])}) - written as '{MISSING}':")
+        logger.info(f"Collection dates unreadable or implausible ({len(stats['date_fixes'])}) - written as '{MISSING}':")
         for line in stats['date_fixes']:
             logger.info(f"  {line}")
     if stats['coord_fixes']:
