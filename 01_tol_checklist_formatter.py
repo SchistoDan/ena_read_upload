@@ -85,7 +85,8 @@ CHECKLIST FORMATTING
   spore-bearing structure, pupa, not provided, not collected, not applicable).
   Known variants are mapped (e.g. Adult/a/flowering/polyp/medusa -> adult;
   immature/subadult/tritonymph -> juvenile; larvae/metacercaria -> larva;
-  pupae -> pupa); anything else becomes 'missing: third party data' and is logged.
+  pupae -> pupa; female/male -> adult); anything else becomes
+  'missing: third party data' and is logged.
 - geographic location (country and/or sea) -> ENA's country list. Known variants
   are mapped (e.g. Turkiye -> Turkey, United States -> USA); placeholders such as
   'Unspecified country' become 'missing: third party data'; any value still not
@@ -182,7 +183,7 @@ LIFESTAGE_MAP = {
     'sub-adult': 'juvenile', 'tritonymph': 'juvenile',
     'larvae': 'larva', 'metacercaria': 'larva',
     'pupae': 'pupa',
-    'female': MISSING, 'male': MISSING,
+    'female': 'adult', 'male': 'adult', 'females': 'adult', 'males': 'adult',
 }
 
 # ENA's accepted values for 'geographic location (country and/or sea)' (as in sample_registration.R)

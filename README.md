@@ -131,7 +131,7 @@ python 01_tol_checklist_formatter.py \
 | sample_alias | Process ID |
 | sample_title | `Voucher: {specimen_voucher}; Sample ID: {Sample ID}` |
 | organism part, collected_by, habitat, sex, specimen_voucher | the metadata column of the same name (`sex` is free text and kept as recorded) |
-| lifestage | `lifestage`, mapped to ENA's list (adult, egg, embryo, gametophyte, juvenile, larva, zygote, vegetative structure, vegetative cell, sporophyte, spore-bearing structure, pupa, not provided, not collected, not applicable). Variants are mapped: `Adult`, `a`, `flowering`, `Polyp`, `Medusa` and `Polygastric` → adult; `juvenil`, `Immature`, `Subadult` and `Tritonymph` → juvenile; `Larvae` and `metacercaria` → larva; `Pupae` → pupa. Other values become `missing: third party data` and are listed in the log |
+| lifestage | `lifestage`, mapped to ENA's list (adult, egg, embryo, gametophyte, juvenile, larva, zygote, vegetative structure, vegetative cell, sporophyte, spore-bearing structure, pupa, not provided, not collected, not applicable). Variants are mapped: `Adult`, `a`, `flowering`, `Polyp`, `Medusa` and `Polygastric` → adult; `juvenil`, `Immature`, `Subadult` and `Tritonymph` → juvenile; `Larvae` and `metacercaria` → larva; `Pupae` → pupa; `female` and `male` → adult. Other values become `missing: third party data` and are listed in the log |
 | project name | `-p` |
 | collection date | `collection_date`, converted to `YYYY-MM-DD` (partial dates kept as `YYYY-MM` / `YYYY`). Unreadable dates, future dates and years before 1700 become `missing: third party data` and are listed in the log |
 | geographic location (latitude / longitude) | `latitude` / `longitude`, decimal degrees, max 8 dp, range-checked |
