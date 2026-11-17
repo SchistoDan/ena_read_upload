@@ -119,7 +119,10 @@ INPUTS (all CSV, TSV or XLSX)
 
 OUTPUTS
 -------
-  {output}_tol_checklist.csv    checklist, one row per included sample (UTF-8)
+  {output}_tol_checklist.tsv    checklist ready for ENA Webin sample registration (UTF-8,
+                                tab-separated): a 'Checklist ERC000053' line, the field
+                                names, a '#units' line (DD for latitude/longitude), then
+                                one row per included sample
   {output}_not_included.csv     batch samples not included, with reason and Sample ID
   {output}_tol_checklist.log    processing log and reconciliation
 
@@ -156,6 +159,11 @@ MISSING = 'missing: third party data'
 EMPTY_VALUES = {'', 'nan', 'none', 'null', 'n/a', 'na', 'not collected', 'nat', 'missing'}
 
 ENA_V2_URL = 'https://www.ebi.ac.uk/ena/taxonomy/rest/v2/suggest-for-submission/{name}'
+
+# First line of the Webin TSV (checklist accession and name)
+CHECKLIST_LINE = ['Checklist', 'ERC000053:1.6', 'Tree of Life Checklist']
+# Units for the '#units' line of the Webin TSV
+COLUMN_UNITS = {'geographic location (latitude)': 'DD', 'geographic location (longitude)': 'DD'}
 
 # Checklist columns (order as in the Tree of Life checklist template)
 CHECKLIST_COLUMNS = [
@@ -923,6 +931,27 @@ def build_checklist(metadata, id_col, resolved, project, batch_order):
     return rows, not_found, stats
 
 
+def write_webin_tsv(path, rows):
+    """
+    Write the checklist in the layout used for ENA Webin sample registration:
+      line 1  Checklist <tab> ERC000053:1.6 <tab> Tree of Life Checklist
+      line 2  field names
+      line 3  #units line (DD under latitude and longitude)
+      then    one tab-separated row per sample (no quoting)
+    """
+    units = ['#units'] + [COLUMN_UNITS.get(col, '') for col in CHECKLIST_COLUMNS[1:]]
+    lines = ['\t'.join(CHECKLIST_LINE), '\t'.join(CHECKLIST_COLUMNS), '\t'.join(units)]
+    for row in rows:
+        values = [str(row[col]) for col in CHECKLIST_COLUMNS]
+        bad = [col for col, v in zip(CHECKLIST_COLUMNS, values) if '\t' in v or '\n' in v or '\r' in v]
+        if bad:
+            logger.error(f"{row['sample_alias']}: tab or line break in {bad} - cannot write TSV")
+            sys.exit(1)
+        lines.append('\t'.join(values))
+    with open(path, 'w', encoding='utf-8', newline='') as f:
+        f.write('\n'.join(lines) + '\n')
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -952,7 +981,7 @@ def main():
         out_base = out_base.with_suffix('')
     if out_base.parent and not out_base.parent.exists():
         out_base.parent.mkdir(parents=True, exist_ok=True)
-    checklist_path = Path(f"{out_base}_tol_checklist.csv")
+    checklist_path = Path(f"{out_base}_tol_checklist.tsv")
     not_included_path = Path(f"{out_base}_not_included.csv")
     setup_logging(f"{out_base}_tol_checklist.log")
 
@@ -985,10 +1014,7 @@ def main():
 
     rows, not_found, stats = build_checklist(metadata, id_col, resolved, args.project, list(batch))
 
-    with open(checklist_path, 'w', encoding='utf-8', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=CHECKLIST_COLUMNS)
-        writer.writeheader()
-        writer.writerows(rows)
+    write_webin_tsv(checklist_path, rows)
 
     not_included = []
     for sid, sample in batch.items():

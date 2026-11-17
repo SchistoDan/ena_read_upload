@@ -145,7 +145,7 @@ Empty, `NaN`, `N/A`, `na` and `not collected` values become `missing: third part
 
 | File | Contents |
 |---|---|
-| `*_tol_checklist.csv` | The checklist (UTF-8), one row per sample with a taxid |
+| `*_tol_checklist.tsv` | The checklist, ready for ENA Webin sample registration: UTF-8, tab-separated, one row per sample with a taxid. It already includes the `Checklist	ERC000053:1.6	Tree of Life Checklist` line above the field names and the `#units` line (`DD` under latitude and longitude) below them, so no editing is needed. Open it in a text editor rather than Excel: Excel reformats the dates |
 | `*_not_included.csv` | Batch samples not included, with their Sample ID, the reason (see below), the name used for the ENA lookup, the matched request-form name and the raw 01/04 statuses |
 | `*_tol_checklist.log` | Taxid sources, conflicts, missing-value counts, lifestage and country changes, date and coordinate problems, and a reconciliation (`included + not included = batch total`) |
 
@@ -171,7 +171,7 @@ With `--query-ena`, the lookup result is added, e.g. `requested (species form); 
 
 Form names written as `Genus sp. {ID}` are also matched by the ID, even if the genus was changed at verification. The `request_form_name` column shows the form name each sample was matched to. The registered `scientific_name` is always ENA's name for the taxid. The log counts samples per reason. For the `requested` reasons it also shows the number of unique request-form names. Not-included rows are per specimen, while species request forms list each name once, so the two totals are not expected to match.
 
-**Lat/lon:** `geographic location (latitude)` and `(longitude)` are optional in ERC000053. Their format rule accepts decimal degrees (max. 8 dp) or an INSDC missing-value term such as `missing: third party data`. The formatter writes that term for empty or unusable coordinates, so its CSV can be submitted as a single file with no lat/lon split.
+**Lat/lon:** `geographic location (latitude)` and `(longitude)` are optional in ERC000053. Their format rule accepts decimal degrees (max. 8 dp) or an INSDC missing-value term such as `missing: third party data`. The formatter writes that term for empty or unusable coordinates, so its TSV can be submitted as a single file with no lat/lon split.
 
 ## Sample Registration 
 
