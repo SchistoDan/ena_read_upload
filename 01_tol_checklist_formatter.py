@@ -120,7 +120,7 @@ INPUTS (all CSV, TSV or XLSX)
 OUTPUTS
 -------
   {output}_tol_checklist.tsv    checklist ready for ENA Webin sample registration (UTF-8,
-                                tab-separated): a 'Checklist ERC000053' line, the field
+                                tab-separated): a 'Checklist ERC000053:1.10' line, the field
                                 names, a '#units' line (DD for latitude/longitude), then
                                 one row per included sample
   {output}_not_included.csv     batch samples not included, with reason and Sample ID
@@ -161,17 +161,21 @@ EMPTY_VALUES = {'', 'nan', 'none', 'null', 'n/a', 'na', 'not collected', 'nat', 
 ENA_V2_URL = 'https://www.ebi.ac.uk/ena/taxonomy/rest/v2/suggest-for-submission/{name}'
 
 # First line of the Webin TSV (checklist accession and name)
-CHECKLIST_LINE = ['Checklist', 'ERC000053:1.6', 'Tree of Life Checklist']
+# The version must match the current checklist (see the template downloaded from Webin);
+# override with --checklist-version if ENA updates it.
+CHECKLIST_ACCESSION = 'ERC000053'
+CHECKLIST_VERSION = '1.10'
+CHECKLIST_NAME = 'Tree of Life Checklist'
 # Units for the '#units' line of the Webin TSV
 COLUMN_UNITS = {'geographic location (latitude)': 'DD', 'geographic location (longitude)': 'DD'}
 
-# Checklist columns (order as in the Tree of Life checklist template)
+# Checklist columns, in the order of the Webin ERC000053 v1.10 template
 CHECKLIST_COLUMNS = [
     'tax_id', 'scientific_name', 'sample_alias', 'sample_title', 'sample_description',
     'organism part', 'lifestage', 'project name', 'collected_by', 'collection date',
     'geographic location (latitude)', 'geographic location (longitude)',
-    'geographic location (region and locality)', 'geographic location (country and/or sea)',
-    'habitat', 'sex', 'collecting institution', 'specimen_voucher',
+    'geographic location (region and locality)', 'habitat', 'sex',
+    'geographic location (country and/or sea)', 'collecting institution', 'specimen_voucher',
 ]
 
 MANDATORY_COLUMNS = [
@@ -931,16 +935,17 @@ def build_checklist(metadata, id_col, resolved, project, batch_order):
     return rows, not_found, stats
 
 
-def write_webin_tsv(path, rows):
+def write_webin_tsv(path, rows, version=CHECKLIST_VERSION):
     """
     Write the checklist in the layout used for ENA Webin sample registration:
-      line 1  Checklist <tab> ERC000053:1.6 <tab> Tree of Life Checklist
+      line 1  Checklist <tab> ERC000053:<version> <tab> Tree of Life Checklist
       line 2  field names
       line 3  #units line (DD under latitude and longitude)
       then    one tab-separated row per sample (no quoting)
     """
     units = ['#units'] + [COLUMN_UNITS.get(col, '') for col in CHECKLIST_COLUMNS[1:]]
-    lines = ['\t'.join(CHECKLIST_LINE), '\t'.join(CHECKLIST_COLUMNS), '\t'.join(units)]
+    checklist_line = ['Checklist', f"{CHECKLIST_ACCESSION}:{version}", CHECKLIST_NAME]
+    lines = ['\t'.join(checklist_line), '\t'.join(CHECKLIST_COLUMNS), '\t'.join(units)]
     for row in rows:
         values = [str(row[col]) for col in CHECKLIST_COLUMNS]
         bad = [col for col, v in zip(CHECKLIST_COLUMNS, values) if '\t' in v or '\n' in v or '\r' in v]
@@ -972,6 +977,9 @@ def main():
     parser.add_argument('--ena1-status', action='append', default=[], help='Any 01 output with ID + ena_status_1, e.g. the combined output (repeatable)')
     parser.add_argument('--ena2-status', action='append', default=[], help='Any 04 output with ID + ena_status_2, e.g. the combined output (repeatable)')
     parser.add_argument('--query-ena', action='store_true', help='Look up still-pending samples on ENA suggest-for-submission v2')
+    parser.add_argument('--checklist-version', default=CHECKLIST_VERSION,
+                        help=f"ERC000053 version written on the first line of the TSV (default: {CHECKLIST_VERSION}); "
+                             "use the version shown in the template downloaded from Webin")
     parser.add_argument('-p', '--project', required=True, help="Value for 'project name' (e.g. BGE)")
     parser.add_argument('-o', '--output', required=True, help='Output base path, e.g. ./out/BGE_batch1')
     args = parser.parse_args()
@@ -1014,7 +1022,7 @@ def main():
 
     rows, not_found, stats = build_checklist(metadata, id_col, resolved, args.project, list(batch))
 
-    write_webin_tsv(checklist_path, rows)
+    write_webin_tsv(checklist_path, rows, args.checklist_version)
 
     not_included = []
     for sid, sample in batch.items():

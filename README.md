@@ -145,7 +145,7 @@ Empty, `NaN`, `N/A`, `na` and `not collected` values become `missing: third part
 
 | File | Contents |
 |---|---|
-| `*_tol_checklist.tsv` | The checklist, ready for ENA Webin sample registration: UTF-8, tab-separated, one row per sample with a taxid. It already includes the `Checklist	ERC000053:1.6	Tree of Life Checklist` line above the field names and the `#units` line (`DD` under latitude and longitude) below them, so no editing is needed. Open it in a text editor rather than Excel: Excel reformats the dates |
+| `*_tol_checklist.tsv` | The checklist, ready for ENA Webin sample registration: UTF-8, tab-separated, one row per sample with a taxid. Columns are in the order of the Webin ERC000053 v1.10 template. It already includes the `Checklist	ERC000053:1.10	Tree of Life Checklist` line above the field names (set the version with `--checklist-version` if ENA updates the checklist; check the template downloaded from Webin) and the `#units` line (`DD` under latitude and longitude) below them, so no editing is needed. Open it in a text editor rather than Excel: Excel reformats the dates |
 | `*_not_included.csv` | Batch samples not included, with their Sample ID, the reason (see below), the name used for the ENA lookup, the matched request-form name and the raw 01/04 statuses |
 | `*_tol_checklist.log` | Taxid sources, conflicts, missing-value counts, lifestage and country changes, date and coordinate problems, and a reconciliation (`included + not included = batch total`) |
 
@@ -199,7 +199,7 @@ If missing lat/lon are kept as one of these terms (as `01_tol_checklist_formatte
 
 Once the TSVs have been generated you will need to add the following line above the header row: 
 ```
-Checklist	ERC000053:1.6	Tree of Life Checklist
+Checklist	ERC000053:1.10	Tree of Life Checklist
 ```
 And this below the header row 
 ```
