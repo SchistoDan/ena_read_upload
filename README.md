@@ -98,6 +98,7 @@ python 01_tol_checklist_formatter.py \
     --ena2-status 04_ena_post_ver.csv \
     -p BGE \
     -o ./sample_registration/BGE_batch1 \
+    --out-format xml --batch 4 \
     --query-ena
 ```
 
@@ -114,6 +115,9 @@ python 01_tol_checklist_formatter.py \
 | `--request-form` | Taxid request TSV(s) submitted to ENA (optional, repeatable). Used only to explain why samples have no taxid yet |
 | `--ena1-status` | Any 01 output with `ID` and `ena_status_1`, e.g. the combined output (optional, repeatable). Used to explain missing taxids |
 | `--ena2-status` | Any 04 output with `ID` and `ena_status_2`, e.g. the combined output (optional, repeatable). Used to explain missing taxids |
+| `--out-format` | `tsv` (default): Webin spreadsheet upload. `xml`: ENA sample XML plus submission XML for programmatic submission |
+| `--batch` | Split the checklist output into N files of near-equal size (default 1). Use it when Webin rejects a large file |
+| `--checklist-version` | ERC000053 version written on the TSV's first line (default `1.10`; check the template downloaded from Webin) |
 | `-p` / `--project` | Value for `project name` (e.g. `BGE`) |
 | `-o` / `--output` | Output base path |
 
@@ -136,7 +140,7 @@ python 01_tol_checklist_formatter.py \
 | collection date | `collection_date`, converted to `YYYY-MM-DD` (partial dates kept as `YYYY-MM` / `YYYY`). Unreadable dates, future dates and years before 1700 become `missing: third party data` and are listed in the log |
 | geographic location (latitude / longitude) | `latitude` / `longitude`, decimal degrees, max 8 dp, range-checked |
 | geographic location (region and locality) | `geographic_location_locality` |
-| geographic location (country and/or sea) | `geographic_location`, matched to ENA's country list. Variants are mapped: Turkiye → Turkey, North Atlantic Ocean → Atlantic Ocean, United States → USA, Cabo Verde → Cape Verde, Vietnam → Viet Nam, Aland → Finland, French Southern Territories → French Southern and Antarctic Lands. `Unspecified country`, `Unrecoverable` and `Exception - Zoological Park` → `missing: third party data`. Any other value not on the list is kept and listed in the log for correction |
+| geographic location (country and/or sea) | `geographic_location`, matched to ENA's country list. Variants are mapped: Turkey → Turkiye (ENA's spelling), North Atlantic Ocean → Atlantic Ocean, United States → USA, Cabo Verde → Cape Verde, Vietnam → Viet Nam, Aland → Finland, French Southern Territories → French Southern and Antarctic Lands. `Unspecified country`, `Unrecoverable` and `Exception - Zoological Park` → `missing: third party data`. Any other value not on the list is kept and listed in the log for correction |
 | collecting institution | `collecting_institution` |
 
 Empty, `NaN`, `N/A`, `na` and `not collected` values become `missing: third party data`. The mandatory fields (organism part, lifestage, project name, collected_by, collection date, region and locality, habitat, sex, country and/or sea, collecting institution) are never left blank. If a value, or a whole source column, is missing, the field is filled with `missing: third party data` and the fill is counted in the log. Unreadable dates and unusable coordinates are also written as `missing: third party data` and listed in the log.
@@ -145,9 +149,17 @@ Empty, `NaN`, `N/A`, `na` and `not collected` values become `missing: third part
 
 | File | Contents |
 |---|---|
-| `*_tol_checklist.tsv` | The checklist, ready for ENA Webin sample registration: UTF-8, tab-separated, one row per sample with a taxid. Columns are in the order of the Webin ERC000053 v1.10 template. It already includes the `Checklist	ERC000053:1.10	Tree of Life Checklist` line above the field names (set the version with `--checklist-version` if ENA updates the checklist; check the template downloaded from Webin) and the `#units` line (`DD` under latitude and longitude) below them, so no editing is needed. Open it in a text editor rather than Excel: Excel reformats the dates |
+| `*_tol_checklist.tsv` (`--out-format tsv`) | The checklist, ready for ENA Webin sample registration: UTF-8, tab-separated, one row per sample with a taxid. Columns are in the order of the Webin ERC000053 v1.10 template. It already includes the `Checklist	ERC000053:1.10	Tree of Life Checklist` line above the field names (set the version with `--checklist-version` if ENA updates the checklist; check the template downloaded from Webin) and the `#units` line (`DD` under latitude and longitude) below them, so no editing is needed. Open it in a text editor rather than Excel: Excel reformats the dates |
+| `*_sample.xml` + `*_submission.xml` (`--out-format xml`) | ENA sample XML (one `SAMPLE` per row: `alias`, `TITLE`, `SAMPLE_NAME` with `TAXON_ID`/`SCIENTIFIC_NAME`, `DESCRIPTION`, one `SAMPLE_ATTRIBUTE` per other field, `ENA-CHECKLIST` = `ERC000053`; latitude/longitude always carry `<UNITS>DD</UNITS>`) and the submission XML with the `ADD` action |
+| `*_batch{i}of{N}` | With `--batch N`, the TSV or sample XML is split into N files. Each TSV batch repeats the three header lines; each XML batch is a complete `SAMPLE_SET` submitted with the same `*_submission.xml` |
 | `*_not_included.csv` | Batch samples not included, with their Sample ID, the reason (see below), the name used for the ENA lookup, the matched request-form name and the raw 01/04 statuses |
 | `*_tol_checklist.log` | Taxid sources, conflicts, missing-value counts, lifestage and country changes, date and coordinate problems, and a reconciliation (`included + not included = batch total`) |
+
+**Submitting the XML** (check the URLs against [ENA's programmatic submission docs](https://ena-docs.readthedocs.io/en/latest/submit/samples/programmatic.html)). Test on the test server first; it validates everything but does not keep the samples:
+```bash
+curl -u Webin-XXXXX:PASSWORD -F "SUBMISSION=@BGE_batch1_submission.xml" -F "SAMPLE=@BGE_batch1_sample_batch1of4.xml" "https://wwwdev.ebi.ac.uk/ena/submit/drop-box/submit/"
+```
+Then use `https://www.ebi.ac.uk/ena/submit/drop-box/submit/` for the real submission. The receipt XML reports `success="true"` with the sample accessions, or lists the error for each failing sample by alias.
 
 **Why a sample is not included** (`reason` column; the first that applies):
 

@@ -88,7 +88,7 @@ CHECKLIST FORMATTING
   pupae -> pupa; female/male -> adult); anything else becomes
   'missing: third party data' and is logged.
 - geographic location (country and/or sea) -> ENA's country list. Known variants
-  are mapped (e.g. Turkiye -> Turkey, United States -> USA); placeholders such as
+  are mapped (e.g. Turkey -> Turkiye, United States -> USA); placeholders such as
   'Unspecified country' become 'missing: third party data'; any value still not
   on ENA's list is kept as recorded and logged.
 - sex is free text and is kept as recorded.
@@ -119,10 +119,18 @@ INPUTS (all CSV, TSV or XLSX)
 
 OUTPUTS
 -------
+  --out-format tsv (default):
   {output}_tol_checklist.tsv    checklist ready for ENA Webin sample registration (UTF-8,
                                 tab-separated): a 'Checklist ERC000053:1.10' line, the field
                                 names, a '#units' line (DD for latitude/longitude), then
                                 one row per included sample
+  --out-format xml:
+  {output}_sample.xml           ENA sample XML (SAMPLE_SET) for programmatic submission;
+                                latitude/longitude carry <UNITS>DD</UNITS>
+  {output}_submission.xml       submission XML with the ADD action
+  --batch N splits the checklist into N files of near-equal size, named
+  *_tol_checklist_batch{i}ofN.tsv or *_sample_batch{i}ofN.xml (TSV batches each
+  repeat the three header lines).
   {output}_not_included.csv     batch samples not included, with reason and Sample ID
   {output}_tol_checklist.log    processing log and reconciliation
 
@@ -147,7 +155,9 @@ import os
 import re
 import sys
 import time
+import math
 import urllib.parse
+import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from datetime import date, datetime
 from pathlib import Path
@@ -198,7 +208,8 @@ LIFESTAGE_MAP = {
     'female': 'adult', 'male': 'adult', 'females': 'adult', 'males': 'adult',
 }
 
-# ENA's accepted values for 'geographic location (country and/or sea)' (as in sample_registration.R)
+# ENA's accepted values for 'geographic location (country and/or sea)', as returned by ENA's
+# ERC000053 v1.10 validation (note: 'Turkiye', not 'Turkey')
 ENA_COUNTRIES = [
     'Afghanistan', 'Albania', 'Algeria', 'American Samoa', 'Andorra', 'Angola', 'Anguilla',
     'Antarctica', 'Antigua and Barbuda', 'Arctic Ocean', 'Argentina', 'Armenia', 'Aruba',
@@ -243,7 +254,7 @@ ENA_COUNTRIES = [
     'Southern Ocean', 'Spain', 'Spratly Islands', 'Sri Lanka', 'State of Palestine', 'Sudan',
     'Suriname', 'Svalbard', 'Sweden', 'Switzerland', 'Syria', 'Taiwan', 'Tajikistan',
     'Tanzania', 'Tasman Sea', 'Thailand', 'Timor-Leste', 'Togo', 'Tokelau', 'Tonga',
-    'Trinidad and Tobago', 'Tromelin Island', 'Tunisia', 'Turkey', 'Turkmenistan',
+    'Trinidad and Tobago', 'Tromelin Island', 'Tunisia', 'Turkiye', 'Turkmenistan',
     'Turks and Caicos Islands', 'Tuvalu', 'USA', 'Uganda', 'Ukraine', 'United Arab Emirates',
     'United Kingdom', 'Uruguay', 'Uzbekistan', 'Vanuatu', 'Venezuela', 'Viet Nam',
     'Wake Island', 'Virgin Islands', 'Wallis and Futuna', 'West Bank', 'Western Sahara',
@@ -254,7 +265,7 @@ ENA_COUNTRIES = [
     'not collected', 'not provided', 'restricted access',
 ]
 COUNTRY_MAP = {
-    'turkiye': 'Turkey', 'türkiye': 'Turkey',
+    'turkey': 'Turkiye', 'türkiye': 'Turkiye',
     'north atlantic ocean': 'Atlantic Ocean', 'south atlantic ocean': 'Atlantic Ocean',
     'united states': 'USA', 'united states of america': 'USA',
     'cabo verde': 'Cape Verde', 'vietnam': 'Viet Nam', 'aland': 'Finland', 'åland': 'Finland',
@@ -957,13 +968,83 @@ def write_webin_tsv(path, rows, version=CHECKLIST_VERSION):
         f.write('\n'.join(lines) + '\n')
 
 
+def write_sample_xml(path, rows):
+    """
+    Write ENA sample XML (SAMPLE_SET) for programmatic submission. Each sample has
+    TITLE, SAMPLE_NAME (TAXON_ID, SCIENTIFIC_NAME), DESCRIPTION and one
+    SAMPLE_ATTRIBUTE per other checklist field, plus ENA-CHECKLIST. Latitude and
+    longitude always carry <UNITS>DD</UNITS> (ENA requires the unit even when the
+    value is a missing term).
+    """
+    core = {'tax_id', 'scientific_name', 'sample_alias', 'sample_title', 'sample_description'}
+    root = ET.Element('SAMPLE_SET')
+    for row in rows:
+        sample = ET.SubElement(root, 'SAMPLE', alias=str(row['sample_alias']))
+        ET.SubElement(sample, 'TITLE').text = str(row['sample_title'])
+        name = ET.SubElement(sample, 'SAMPLE_NAME')
+        ET.SubElement(name, 'TAXON_ID').text = str(row['tax_id'])
+        ET.SubElement(name, 'SCIENTIFIC_NAME').text = str(row['scientific_name'])
+        ET.SubElement(sample, 'DESCRIPTION').text = str(row['sample_description'])
+        attributes = ET.SubElement(sample, 'SAMPLE_ATTRIBUTES')
+        for col in CHECKLIST_COLUMNS:
+            if col in core:
+                continue
+            attribute = ET.SubElement(attributes, 'SAMPLE_ATTRIBUTE')
+            ET.SubElement(attribute, 'TAG').text = col
+            ET.SubElement(attribute, 'VALUE').text = str(row[col])
+            if col in COLUMN_UNITS:
+                ET.SubElement(attribute, 'UNITS').text = COLUMN_UNITS[col]
+        attribute = ET.SubElement(attributes, 'SAMPLE_ATTRIBUTE')
+        ET.SubElement(attribute, 'TAG').text = 'ENA-CHECKLIST'
+        ET.SubElement(attribute, 'VALUE').text = CHECKLIST_ACCESSION
+    ET.indent(root, space='  ')
+    ET.ElementTree(root).write(path, encoding='UTF-8', xml_declaration=True)
+
+
+def write_submission_xml(path):
+    """Write the submission XML with the ADD action."""
+    root = ET.Element('SUBMISSION')
+    ET.SubElement(ET.SubElement(ET.SubElement(root, 'ACTIONS'), 'ACTION'), 'ADD')
+    ET.indent(root, space='  ')
+    ET.ElementTree(root).write(path, encoding='UTF-8', xml_declaration=True)
+
+
+def write_outputs(out_base, rows, out_format, n_batches, version):
+    """
+    Write the checklist rows in the chosen format, optionally split into
+    n_batches files of near-equal size. Returns a list of (path, rows_in_file).
+    """
+    if n_batches < 1:
+        logger.error('--batch must be 1 or more')
+        sys.exit(1)
+    if rows and n_batches > len(rows):
+        logger.warning(f"--batch {n_batches} is more than the {len(rows)} checklist rows - using {len(rows)}")
+        n_batches = len(rows)
+    size = math.ceil(len(rows) / n_batches) if rows else 0
+    chunks = [rows[i * size:(i + 1) * size] for i in range(n_batches)] if rows else [[]]
+    chunks = [c for c in chunks if c] or [[]]
+    stem = '_tol_checklist' if out_format == 'tsv' else '_sample'
+    written = []
+    for i, chunk in enumerate(chunks, 1):
+        suffix = f"_batch{i}of{len(chunks)}" if len(chunks) > 1 else ''
+        path = Path(f"{out_base}{stem}{suffix}.{out_format}")
+        if out_format == 'tsv':
+            write_webin_tsv(path, chunk, version)
+        else:
+            write_sample_xml(path, chunk)
+        written.append((path, chunk))
+    if out_format == 'xml':
+        write_submission_xml(Path(f"{out_base}_submission.xml"))
+    return written
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Build the ENA Tree of Life checklist (CSV) for samples with ENA taxids, '
+        description='Build the ENA Tree of Life checklist (TSV or XML) for samples with ENA taxids, '
                     'using the metadata and the taxid-minting workflow outputs.',
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('-m', '--metadata', required=True, help='Original sample metadata (CSV/TSV/XLSX)')
@@ -980,6 +1061,11 @@ def main():
     parser.add_argument('--checklist-version', default=CHECKLIST_VERSION,
                         help=f"ERC000053 version written on the first line of the TSV (default: {CHECKLIST_VERSION}); "
                              "use the version shown in the template downloaded from Webin")
+    parser.add_argument('--out-format', choices=['tsv', 'xml'], default='tsv',
+                        help="Checklist output: 'tsv' (Webin spreadsheet upload, default) or 'xml' "
+                             "(ENA sample XML + submission XML for programmatic submission)")
+    parser.add_argument('--batch', type=int, default=1, metavar='N',
+                        help='Split the checklist output into N files of near-equal size (default: 1)')
     parser.add_argument('-p', '--project', required=True, help="Value for 'project name' (e.g. BGE)")
     parser.add_argument('-o', '--output', required=True, help='Output base path, e.g. ./out/BGE_batch1')
     args = parser.parse_args()
@@ -989,7 +1075,6 @@ def main():
         out_base = out_base.with_suffix('')
     if out_base.parent and not out_base.parent.exists():
         out_base.parent.mkdir(parents=True, exist_ok=True)
-    checklist_path = Path(f"{out_base}_tol_checklist.tsv")
     not_included_path = Path(f"{out_base}_not_included.csv")
     setup_logging(f"{out_base}_tol_checklist.log")
 
@@ -1022,7 +1107,7 @@ def main():
 
     rows, not_found, stats = build_checklist(metadata, id_col, resolved, args.project, list(batch))
 
-    write_webin_tsv(checklist_path, rows, args.checklist_version)
+    written = write_outputs(out_base, rows, args.out_format, args.batch, args.checklist_version)
 
     not_included = []
     for sid, sample in batch.items():
@@ -1063,7 +1148,12 @@ def main():
     if source_stats.get('conflicting sources'):
         logger.info(f"  samples where sources disagreed (see warnings): {source_stats['conflicting sources']}")
     reasons = Counter(r['reason'].split(';')[0] for r in not_included)
-    logger.info(f"Checklist rows written: {len(rows)} -> {checklist_path}")
+    logger.info(f"Checklist rows written: {len(rows)} ({args.out_format.upper()}, {len(written)} file(s))")
+    for path, chunk in written:
+        span = f" ({chunk[0]['sample_alias']} ... {chunk[-1]['sample_alias']})" if chunk else ''
+        logger.info(f"  {path}: {len(chunk)} rows{span}")
+    if args.out_format == 'xml':
+        logger.info(f"  {out_base}_submission.xml: ADD action")
     logger.info(f"Not included: {len(not_included)} -> {not_included_path}")
     for reason, n in reasons.most_common():
         line = f"  {reason}: {n}"
