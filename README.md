@@ -1,16 +1,7 @@
-# ENA SUBMISSIONS SOP FOR UKBOL ACCELERATED
+# ENA SUBMISSIONS SOP
+**Date:** 2026-11-17
 
-[![DOI](https://zenodo.org/badge/1186149562.svg)](https://doi.org/10.5281/zenodo.19132437)
-
-
-<p align="center">
-  <img src="https://github.com/museomics/ukbol_submissions/blob/main/img/UKBOL%20dragonfly.png" width="200" height="200"
-    alt="UKBOL Accelerated logo">
-</p>
-
-**Date:** 2026-03-19
-
-**Author:** Maria Kamouyiaros@NHMUK
+**Author:** Maria Kamouyiaros & Dan Parsons @NHMUK
 
 ## Background
 The following steps were used to prepare all files needed for submission of genomic skim data generated in UKBOL_Accelerated to the [European Nucleotide Archive (ENA)](https://www.ebi.ac.uk/ena/browser/home), with the assumption that work is performed from a HPC or unix operating system with full access to all UKBOL pipeline outputs and data. 
@@ -105,7 +96,7 @@ python 01_tol_checklist_formatter.py \
 |---|---|
 | `-m` / `--metadata` | Original sample metadata (CSV/TSV/XLSX). It may also contain samples outside this batch, which are ignored |
 | `--id-col` | Metadata column holding the Process ID (default `Process ID`). This becomes `sample_alias` |
-| `--species` | `00_filter_taxonomy` species-level output. Defines the batch (repeatable) |
+| `--species` | `00_filter_taxonomy` species-level output. Defines the batch (repeatable). If an ID appears in more than one batch file (e.g. a sample re-run through 00), a species-level entry wins over a genus-level one, and otherwise the file given later wins |
 | `--non-species` | `00_filter_taxonomy` genus-level and above output (optional, repeatable) |
 | `--ena1` | `01_ena_taxid_check.py` `*-ena_matches.csv` (repeatable) |
 | `--ena2` | `04_post_ver_ena_check.py` `*-ena_matches.csv` (optional, repeatable) |
@@ -130,12 +121,13 @@ python 01_tol_checklist_formatter.py \
 | tax_id, scientific_name, sample_description | ENA taxid and ENA scientific name |
 | sample_alias | Process ID |
 | sample_title | `Voucher: {specimen_voucher}; Sample ID: {Sample ID}` |
-| organism part, lifestage, collected_by, habitat, sex, specimen_voucher | the metadata column of the same name |
+| organism part, collected_by, habitat, sex, specimen_voucher | the metadata column of the same name (`sex` is free text and kept as recorded) |
+| lifestage | `lifestage`, mapped to ENA's list (adult, egg, embryo, gametophyte, juvenile, larva, zygote, vegetative structure, vegetative cell, sporophyte, spore-bearing structure, pupa, not provided, not collected, not applicable). Variants are mapped: `Adult`, `a`, `flowering`, `Polyp`, `Medusa` and `Polygastric` → adult; `juvenil`, `Immature`, `Subadult` and `Tritonymph` → juvenile; `Larvae` and `metacercaria` → larva; `Pupae` → pupa; `female` and `male` → adult. Other values become `missing: third party data` and are listed in the log |
 | project name | `-p` |
-| collection date | `collection_date`, converted to `YYYY-MM-DD` (partial dates kept as `YYYY-MM` / `YYYY`) |
+| collection date | `collection_date`, converted to `YYYY-MM-DD` (partial dates kept as `YYYY-MM` / `YYYY`). Unreadable dates, future dates and years before 1700 become `missing: third party data` and are listed in the log |
 | geographic location (latitude / longitude) | `latitude` / `longitude`, decimal degrees, max 8 dp, range-checked |
 | geographic location (region and locality) | `geographic_location_locality` |
-| geographic location (country and/or sea) | `geographic_location` |
+| geographic location (country and/or sea) | `geographic_location`, matched to ENA's country list. Variants are mapped: Turkiye → Turkey, North Atlantic Ocean → Atlantic Ocean, United States → USA, Cabo Verde → Cape Verde, Vietnam → Viet Nam, Aland → Finland, French Southern Territories → French Southern and Antarctic Lands. `Unspecified country`, `Unrecoverable` and `Exception - Zoological Park` → `missing: third party data`. Any other value not on the list is kept and listed in the log for correction |
 | collecting institution | `collecting_institution` |
 
 Empty, `NaN`, `N/A`, `na` and `not collected` values become `missing: third party data`. The mandatory fields (organism part, lifestage, project name, collected_by, collection date, region and locality, habitat, sex, country and/or sea, collecting institution) are never left blank. If a value, or a whole source column, is missing, the field is filled with `missing: third party data` and the fill is counted in the log. Unreadable dates and unusable coordinates are also written as `missing: third party data` and listed in the log.
@@ -144,9 +136,9 @@ Empty, `NaN`, `N/A`, `na` and `not collected` values become `missing: third part
 
 | File | Contents |
 |---|---|
-| `*_tol_checklist.csv` | The checklist (UTF-8), one row per sample with a taxid |
-| `*_not_included.csv` | Batch samples not included, with the reason (see below), the name used for the ENA lookup and the raw 01/04 statuses |
-| `*_tol_checklist.log` | Taxid sources, conflicts, missing-value counts, date and coordinate problems, and a reconciliation (`included + not included = batch total`) |
+| `*_tol_checklist.tsv` | The checklist, ready for ENA Webin sample registration: UTF-8, tab-separated, one row per sample with a taxid. It already includes the `Checklist	ERC000053:1.6	Tree of Life Checklist` line above the field names and the `#units` line (`DD` under latitude and longitude) below them, so no editing is needed. Open it in a text editor rather than Excel: Excel reformats the dates |
+| `*_not_included.csv` | Batch samples not included, with their Sample ID, the reason (see below), the name used for the ENA lookup, the matched request-form name and the raw 01/04 statuses |
+| `*_tol_checklist.log` | Taxid sources, conflicts, missing-value counts, lifestage and country changes, date and coordinate problems, and a reconciliation (`included + not included = batch total`) |
 
 **Why a sample is not included** (`reason` column; the first that applies):
 
@@ -160,17 +152,60 @@ Empty, `NaN`, `N/A`, `na` and `not collected` values become `missing: third part
 | `not on any request form` | No taxid, and the name is on none of the supplied request forms (shown as `no taxid yet` when no forms are given) | Check whether it was dropped from the forms |
 | `Process ID not found in metadata` | The sample has a taxid but no metadata row | Add it to the metadata |
 
-With `--query-ena`, the lookup result is added, e.g. `requested (species form); ENA lookup: not found in ENA`. The log counts samples per reason. For the `requested` reasons it also shows the number of unique request-form names. Not-included rows are per specimen, while species request forms list each name once, so the two totals are not expected to match.
+With `--query-ena`, the lookup result is added, e.g. `requested (species form); ENA lookup: not found in ENA`.
 
-**Lat/lon:** `geographic location (latitude)` and `(longitude)` are optional in ERC000053. Their format rule accepts decimal degrees (max. 8 dp) or an INSDC missing-value term such as `missing: third party data`. The formatter writes that term for empty or unusable coordinates, so its CSV can be submitted as a single file with no lat/lon split.
+**Name trimming (matching only):** when matching samples to the request forms and looking names up on ENA, the script also tries a trimmed name:
+- qualifiers are removed: `cf.`, `aff.`, `nr.`, `s.l.`, `s.str.`, `sensu lato`, `agg.`, `complex`, `group`;
+- bracketed text is removed, e.g. `(Pennant, 1777)`;
+- trailing codes are dropped. For example, `Troglochthonius doratodactylus GP` matches `Troglochthonius doratodactylus`, and `Alvania aff. moerchii` matches `Alvania moerchii`;
+- a lower-case subspecies is kept. Names without a proper epithet, e.g. `Eunice sp2`, are not trimmed to a species.
 
+Form names written as `Genus sp. {ID}` are also matched by the ID, even if the genus was changed at verification. The `request_form_name` column shows the form name each sample was matched to. The registered `scientific_name` is always ENA's name for the taxid. The log counts samples per reason. For the `requested` reasons it also shows the number of unique request-form names. Not-included rows are per specimen, while species request forms list each name once, so the two totals are not expected to match.
 
+**Lat/lon:** `geographic location (latitude)` and `(longitude)` are optional in ERC000053. Their format rule accepts decimal degrees (max. 8 dp) or an INSDC missing-value term such as `missing: third party data`. The formatter writes that term for empty or unusable coordinates, so its TSV can be submitted as a single file with no lat/lon split.
+
+## Sample Registration 
+
+To register all samples - the metadata spreadsheet for all samples has to go through a series of clean-ups and checks: 
+- Patch spreadsheet with existing tax IDs
+- Patch spreadsheet with any registered tax IDs
+- Check for trailing whitespaces and tabs
+- Check for valid date and coordinate formatting
+- Check for valid country names
+- Check for valid species names (if registering new) - Manual assessment and correction of any discrepancies in nomenclature 
+- Check for valid tax IDs (if registering new) - In UKBOL Accelerated, tax IDs were searched with [taxid-minting](https://github.com/museomics/taxid-minting-process) and 476 new tax IDs were registered.
+
+These are all done in R with the following R script: [sample_registration.R](https://github.com/museomics/ukbol_submissions/blob/main/sample_registration.R)
+
+### This script is made up of 2 main steps:
+
+  - Step one: prepares metadata spreadsheet for ENA submission requirements by patching the spreadsheet with existing and registered tax IDs and checks for any missing (outputs `missing_taxIDs.csv`)
+  - Step two: final checks and formatting for ENA submission. **Outputs:** **(1)** either a list of countries that are incorrectly spelled in the terminal or `character(0)` if all countries are named correctly, **(2)** a final csv of all of the final information (`sample_registration.csv`), **(3)** a TSV for submission online containing samples with lat/lon (`sample_registration.tsv`), and **(4)** a TSV for submission containing only samples without lat/lon (`sample_registration_nolatlon.tsv`).  
+
+**NOTE:** You will notice that at the end samples with no lat/lon metadata are parsed into a separate submission TSV file. This is needed because `sample_registration.R` converts missing lat/lon values to `NA` and writes them as `NA`, which ENA's lat/lon format rule rejects. Latitude and longitude are not mandatory in ERC000053. Their format rule accepts decimal degrees (max. 8 dp) or an INSDC missing-value term, e.g. `missing: third party data`, `not collected` or `missing`:
+```
+(^[+-]?[0-9]+.?[0-9]{0,8}$)|(^not applicable$)|(^not collected$)|(^not provided$)|(^restricted access$)|(^missing: control sample$)|(^missing: sample group$)|(^missing: synthetic construct$)|(^missing: lab stock$)|(^missing: third party data$)|(^missing: data agreement established pre-2023$)|(^missing: endangered species$)|(^missing: human-identifiable$)|(^missing$)
+```
+If missing lat/lon are kept as one of these terms (as `01_tol_checklist_formatter.py` does), all samples can be submitted in a single file.
+
+Once the TSVs have been generated you will need to add the following line above the header row: 
+```
+Checklist	ERC000053:1.6	Tree of Life Checklist
+```
+And this below the header row 
+```
+#units										DD	DD						
+```
+**OR** the following if lat/lon not included: 
+```
+#units															
+```
 The TSV files are then ready for submission via the ENA Webin.
 
 <p align="center">
   <img src="https://github.com/museomics/ukbol_submissions/blob/main/img/ENA_sample_registration.png" width="400" height="300"
     alt="ENA Webin sample registration">
-</p>
+</p
 
 
 ## Sequencing read submission 
