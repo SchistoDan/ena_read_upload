@@ -147,11 +147,6 @@ Empty, `NaN`, `N/A`, `na` and `not collected` values become `missing: third part
 | `*_not_included.csv` | Batch samples not included, with their Sample ID, the reason (see below), the name used for the ENA lookup, the matched request-form name and the raw 01/04 statuses |
 | `*_tol_checklist.log` | Taxid sources, conflicts, missing-value counts, lifestage and country changes, date and coordinate problems, and a reconciliation (`included + not included = batch total`) |
 
-**Submitting the XML** (check the URLs against [ENA's programmatic submission docs](https://ena-docs.readthedocs.io/en/latest/submit/samples/programmatic.html)). Test on the test server first; it validates everything but does not keep the samples:
-```bash
-curl -u Webin-XXXXX:PASSWORD -F "SUBMISSION=@BGE_batch1_submission.xml" -F "SAMPLE=@BGE_batch1_sample_batch1of4.xml" "https://wwwdev.ebi.ac.uk/ena/submit/drop-box/submit/"
-```
-Then use `https://www.ebi.ac.uk/ena/submit/drop-box/submit/` for the real submission. The receipt XML reports `success="true"` with the sample accessions, or lists the error for each failing sample by alias.
 
 **Why a sample is not included** (`reason` column; the first that applies):
 
@@ -177,48 +172,19 @@ Form names written as `Genus sp. {ID}` are also matched by the ID, even if the g
 
 **Lat/lon:** `geographic location (latitude)` and `(longitude)` are optional in ERC000053. Their format rule accepts decimal degrees (max. 8 dp) or an INSDC missing-value term such as `missing: third party data`. The formatter writes that term for empty or unusable coordinates, so its TSV can be submitted as a single file with no lat/lon split.
 
-## Sample Registration 
-
-To register all samples - the metadata spreadsheet for all samples has to go through a series of clean-ups and checks: 
-- Patch spreadsheet with existing tax IDs
-- Patch spreadsheet with any registered tax IDs
-- Check for trailing whitespaces and tabs
-- Check for valid date and coordinate formatting
-- Check for valid country names
-- Check for valid species names (if registering new) - Manual assessment and correction of any discrepancies in nomenclature 
-- Check for valid tax IDs (if registering new) - In UKBOL Accelerated, tax IDs were searched with [taxid-minting](https://github.com/museomics/taxid-minting-process) and 476 new tax IDs were registered.
-
-These are all done in R with the following R script: [sample_registration.R](https://github.com/museomics/ukbol_submissions/blob/main/sample_registration.R)
-
-### This script is made up of 2 main steps:
-
-  - Step one: prepares metadata spreadsheet for ENA submission requirements by patching the spreadsheet with existing and registered tax IDs and checks for any missing (outputs `missing_taxIDs.csv`)
-  - Step two: final checks and formatting for ENA submission. **Outputs:** **(1)** either a list of countries that are incorrectly spelled in the terminal or `character(0)` if all countries are named correctly, **(2)** a final csv of all of the final information (`sample_registration.csv`), **(3)** a TSV for submission online containing samples with lat/lon (`sample_registration.tsv`), and **(4)** a TSV for submission containing only samples without lat/lon (`sample_registration_nolatlon.tsv`).  
-
-**NOTE:** You will notice that at the end samples with no lat/lon metadata are parsed into a separate submission TSV file. This is needed because `sample_registration.R` converts missing lat/lon values to `NA` and writes them as `NA`, which ENA's lat/lon format rule rejects. Latitude and longitude are not mandatory in ERC000053. Their format rule accepts decimal degrees (max. 8 dp) or an INSDC missing-value term, e.g. `missing: third party data`, `not collected` or `missing`:
-```
-(^[+-]?[0-9]+.?[0-9]{0,8}$)|(^not applicable$)|(^not collected$)|(^not provided$)|(^restricted access$)|(^missing: control sample$)|(^missing: sample group$)|(^missing: synthetic construct$)|(^missing: lab stock$)|(^missing: third party data$)|(^missing: data agreement established pre-2023$)|(^missing: endangered species$)|(^missing: human-identifiable$)|(^missing$)
-```
-If missing lat/lon are kept as one of these terms (as `01_tol_checklist_formatter.py` does), all samples can be submitted in a single file.
-
-Once the TSVs have been generated you will need to add the following line above the header row: 
-```
-Checklist	ERC000053:1.10	Tree of Life Checklist
-```
-And this below the header row 
-```
-#units										DD	DD						
-```
-**OR** the following if lat/lon not included: 
-```
-#units															
-```
-The TSV files are then ready for submission via the ENA Webin.
+**The TSV files are then ready for submission via the ENA Webin**:
 
 <p align="center">
   <img src="https://github.com/museomics/ukbol_submissions/blob/main/img/ENA_sample_registration.png" width="400" height="300"
     alt="ENA Webin sample registration">
 </p
+
+Alternatively, you can **Submit the XML programmatically** (check the URLs against [ENA's programmatic submission docs](https://ena-docs.readthedocs.io/en/latest/submit/samples/programmatic.html)). Test on the test server first; it validates everything but does not keep the samples:
+```bash
+curl -u Webin-XXXXX:PASSWORD -F "SUBMISSION=@BGE_batch1_submission.xml" -F "SAMPLE=@BGE_batch1_sample_batch1of4.xml" "https://wwwdev.ebi.ac.uk/ena/submit/drop-box/submit/"
+```
+Then use `https://www.ebi.ac.uk/ena/submit/drop-box/submit/` for the real submission. The receipt XML reports `success="true"` with the sample accessions, or lists the error for each failing sample by alias.
+
 
 
 ## Sequencing read submission 
