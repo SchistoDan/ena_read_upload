@@ -59,7 +59,7 @@ With a guide on how to register available [here](https://ena-docs.readthedocs.io
 
 **4. An install of R (v >4.3.0)**
 - This can be on any operating system you like
-- Packages: dplyr and plyr
+- Packages: dplyr and plyr (for `sample_registration.R`); `submit_reads.R` uses base R only
 
 **5. An install of Python (v >3.11)**
 - Many scripts (e.g., ENA bulk webin-cli and assess_mitogenomes.py) require python to run (run with Python v3.12.8)
@@ -189,51 +189,101 @@ Then use `https://www.ebi.ac.uk/ena/submit/drop-box/submit/` for the real submis
 
 ## Sequencing read submission 
 
-This information is needed in a single TSV file that can be used to generate a [manifest file](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html). 
+Paired-end reads are submitted with the [ena bulk webincli tool](https://github.com/enasequence/ena-bulk-webincli/tree/master), which takes a single TSV (one row per sample), generates a [manifest file](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html) for each sample, and validates or submits the manifests and read files. The TSV is built with [submit_reads.R](submit_reads.R).
+
+**Submission TSV fields** (written by `submit_reads.R`):
 
 |Value| Description |
 |---|---|
-|study_accession| project accession number|
-|sample_accession| Unique sample accession number from ENA - available under Samples > Samples Report | 
-|experiment_name| A unique experiment name|
+|study_accession| Project (study) accession number, e.g. `PRJEBXXXXX`|
+|sample_accession| Sample accession from ENA, taken from the Webin Samples Report | 
+|experiment_name| A unique experiment name: `experiment_prefix` + sample alias (e.g. `BGE_BSNTN2426-24`)|
 |sequencing_platform| Sequencing platform used. [See ENA permitted values](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html#platform)|
 |sequencing_instrument|Sequencing instrument used. [See ENA permitted values](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html#instrument)| 
-|library_name|Identifier for library and sequencing run, e.g., Batch01|
 |library_source| Source molecule, e.g., `GENOMIC` [See ENA permitted values](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html#source)| 
-|library_selection|Library selection, e.g. `RANDOM` [See ENA permitted values](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html#selection), 
-|library_strategy|Sequencing strategy, e.g., whole genome sequencing (`WGS`). [See ENA permitted values](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html#strategy), 
-|library_description| Unique descriptor for library| 
-|"uploaded file 1"|Gzipped forward filepath - `uploaded.file.1`|
-|"uploaded file 2"|Gzipped reverse filepath - `uploaded.file.2`| 
+|library_selection|Library selection, e.g. `RANDOM` [See ENA permitted values](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html#selection)|
+|library_strategy|Sequencing strategy, e.g., whole genome sequencing (`WGS`). [See ENA permitted values](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html#strategy)|
+|library_description| Description of the library: from the samplesheet if given, otherwise `default_library_description` set in the script| 
+|uploaded file 1|Gzipped forward (R1) read file, relative to the upload directory (`-d`)|
+|uploaded file 2|Gzipped reverse (R2) read file, relative to the upload directory (`-d`)| 
 
+`library_name` is optional for ENA reads and is not included.
 
-**To generate that TSV:**
+### Step 1: Download the Samples Report
 
-1. CSV: ENA registered sample metadata - this can be downloaded directly from the ENA webin site (must contain at minimum sample accession (`sample_accession`) and unique sample name - in this case we use `sample_alias`) 
+Download the registered samples from the Webin portal (Samples > Samples Report) as CSV. It must contain the sample accession (`id`) and the sample alias (`alias`). Download it after **all** sample registrations are complete, so every registered sample is included.
 
 <p align="center">
   <img src="https://github.com/museomics/ukbol_submissions/blob/main/img/ENA_sample_download.png" width="400" height="300"
     alt="ENA Webin Sample metadata download">
 </p
 
-2. CSV: Sequence filepaths - this must have a minimum of 3 columns, unique sample name (`sample_alias`), forward read filepath (`uploaded.file.1`) and reverse read filepath (`uploaded.file.2`)
+### Step 2: Prepare the samplesheet
 
-To generate the TSV run the R code [submit_reads.R](https://github.com/museomics/ukbol_submissions/blob/main/submit_reads.R)- where you change defined variables according to needs.
+A CSV with one row per sample:
 
-Once this TSV is generated, it can be **validated** and then **submitted** to ENA via the [ena bulk webincli tool](https://github.com/enasequence/ena-bulk-webincli/tree/master).
-This tool takes the TSV and generates individual manifests before submitting the manifests and sequence data to ENA. 
+| Column | Required | Description |
+|---|---|---|
+| `sample_alias` | Yes | The sample alias used at registration (Process ID) |
+| `uploaded file 1` | Yes | R1 FASTQ (`.fastq.gz`), relative to the upload directory |
+| `uploaded file 2` | Yes | R2 FASTQ (`.fastq.gz`), relative to the upload directory |
+| `library_description` | No | Overrides the default library description for that sample |
 
-To validate the TSV and generate the manifests the command would look like the following: 
+The samplesheet can include samples that are not registered yet (e.g. still waiting for taxids to be minted): they are set aside, not submitted (see Step 4).
+
+### Step 3: Edit the settings in `submit_reads.R`
+
+| Setting | Description |
+|---|---|
+| `samplesheet_file` | The samplesheet from Step 2 |
+| `samples_report_file` | The Samples Report from Step 1 |
+| `output_prefix` | Prefix for the output files (default `sequence_submission`) |
+| `upload_dir` | Parent directory of the FASTQ files - the same directory passed to `bulk_webincli.py` with `-d`. Used to check the files exist |
+| `study_accession` | Your project accession (`PRJEB...`) |
+| `experiment_prefix` | Prefix for `experiment_name` (default `BGE_`) |
+| `sequencing_platform`, `sequencing_instrument` | e.g. `ELEMENT` / `Element AVITI`, or `ILLUMINA` / `Illumina NovaSeq 6000` |
+| `library_source`, `library_selection`, `library_strategy` | e.g. `GENOMIC` / `RANDOM` / `WGS` for genome skims |
+| `default_library_description` | Used when the samplesheet has no `library_description` |
+
+### Step 4: Run `submit_reads.R`
+
 ```
-python /path/to/ena-bulk-webincli/bulk_webincli.py -u Webin-XXXXX -p XXXXXX -g reads -s sequence_submission.tsv -m validate -d UKBOL_accelerated --webinCliPath /path/to/ena-bulk-webincli/webin-cli-9.0.1.jar
+Rscript submit_reads.R
 ```
 
-**NOTE** You will have to specify the filepath to bulk_webincli.py based on where your install is. You will also have to specify your webin login details (`-u` and `-p` for username and password). The argument `-d` specifies the parent directory of your files to be uploaded
-To submit the manifests run change `-m validate` to `-m submit`: 
+The script:
+- joins the samplesheet to the Samples Report by sample alias;
+- sets aside samples that are not registered yet;
+- checks every FASTQ file exists, is not empty and is gzip-compressed, that R1 and R2 are different files, and that no file is used by two samples;
+- writes the outputs below and prints a summary of the counts.
+
+| Output | Contents |
+|---|---|
+| `sequence_submission.tsv` | The spreadsheet for `bulk_webincli.py`: registered samples whose FASTQ files passed every check |
+| `sequence_submission_pending.csv` | Samplesheet rows not in the Samples Report (not registered yet). Re-run once they are registered |
+| `sequence_submission_file_problems.csv` | Samples left out, with the reason (missing, empty or non-gzipped file, R1 = R2, file used twice, duplicated alias) |
+| `sequence_submission_registered_no_reads.csv` | Registered samples with no row in the samplesheet (for information) |
+
+Check the summary counts, and fix anything in `sequence_submission_file_problems.csv` before continuing. The script prints a note if any FASTQ path is absolute: `bulk_webincli.py` expects paths relative to `-d`.
+
+### Step 5: Validate
+
+Validation generates the manifests and checks the TSV and read files without submitting anything:
+```
+python /path/to/ena-bulk-webincli/bulk_webincli.py -u Webin-XXXXX -p 'XXXXXX' -g reads -s sequence_submission.tsv -m validate -d /path/to/upload_dir --webinCliPath /path/to/ena-bulk-webincli/webin-cli-9.0.1.jar
+```
+
+**NOTE** You will have to specify the filepath to `bulk_webincli.py` and the Webin-CLI `.jar` based on where your install is, and your Webin login details (`-u` and `-p`). Put the password in single quotes: characters such as `!` are otherwise interpreted by the shell. `-d` is the parent directory of the files to be uploaded and must match `upload_dir` in `submit_reads.R`. Run from a machine with internet access (HPC compute nodes often have none).
+
+### Step 6: Submit
+
+To submit the manifests and upload the reads, change `-m validate` to `-m submit`:
 
 ```
-python /path/to/ena-bulk-webincli/bulk_webincli.py -u Webin-XXXXX -p XXXXXX -g reads -s sequence_submission.tsv -m submit -d UKBOL_accelerated --webinCliPath /path/to/ena-bulk-webincli/webin-cli-9.0.1.jar
+python /path/to/ena-bulk-webincli/bulk_webincli.py -u Webin-XXXXX -p 'XXXXXX' -g reads -s sequence_submission.tsv -m submit -d /path/to/upload_dir --webinCliPath /path/to/ena-bulk-webincli/webin-cli-9.0.1.jar
 ```
+
+Keep the reports and receipts written by the tool. Samples in `sequence_submission_pending.csv` can be submitted later: once they are registered, download a new Samples Report and re-run `submit_reads.R` with a samplesheet containing just those samples.
 
 ## Mitogenome assembly submissions
 
