@@ -45,17 +45,17 @@
 # ---------------------------------------------------------------------------
 # Settings - edit these
 # ---------------------------------------------------------------------------
-samplesheet_file    <- "/home/dparsons/projects/nhm/museomix/BGE/ena_submission/ena-read-upload/ena_read_upload/non_BSNHM_skims/read_upload/samplesheets/combined_samplesheet.csv"
-samples_report_file <- "/home/dparsons/projects/nhm/museomix/BGE/ena_submission/ena-read-upload/ena_read_upload/non_BSNHM_skims/sample_reg/nonBSNHM_BGE_sample_reg-2026-11-19.csv"
+samplesheet_file    <- ""
+samples_report_file <- ""
 output_prefix       <- "read_submission"
 
 # Parent directory of the FASTQ files: the same directory given to
 # bulk_webincli.py with -d. Paths in the samplesheet are relative to it
 # (absolute paths are used as they are).
-upload_dir <- "/home/dparsons/projects/nhm/museomix/BGE/seq_data/"
+upload_dir <- ""
 
-study_accession       <- "PRJEB78703"
-experiment_prefix     <- "BGE_"          # experiment_name = prefix + sample alias
+study_accession       <- "PRJ..."
+experiment_prefix     <- "EXP_"          # experiment_name = prefix + sample alias
 sequencing_platform   <- "ILLUMINA"       # ENA permitted values, e.g. ILLUMINA
 sequencing_instrument <- "Illumina NovaSeq X" # e.g. "Illumina NovaSeq 6000"
 library_source        <- "GENOMIC"
