@@ -231,7 +231,7 @@ The TSV files are then ready for submission via the ENA Webin.
 
 ## Sequencing read submission 
 
-Paired-end reads are submitted with the [ena bulk webincli tool](https://github.com/enasequence/ena-bulk-webincli/tree/master). It takes a single TSV (one row per experiment, i.e. per read set), generates a [manifest file](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html) for each row, and validates or submits the manifests and read files. The TSV is built with [submit_reads.R](submit_reads.R).
+Paired-end reads are submitted with the [ena bulk webincli tool](https://github.com/enasequence/ena-bulk-webincli/tree/master). It takes a single TSV (one row per experiment, i.e. per read set, so a sample with replicates has several rows), generates a [manifest file](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html) for each row, and validates or submits the manifests and read files. The TSV is built with [submit_reads.R](submit_reads.R).
 
 **Submission TSV fields** (written by `submit_reads.R`):
 
@@ -239,7 +239,7 @@ Paired-end reads are submitted with the [ena bulk webincli tool](https://github.
 |---|---|
 |study_accession| Project (study) accession number, e.g. `PRJEBXXXXX`|
 |sample_accession| Sample accession from ENA, taken from the Webin Samples Report | 
-|experiment_name| A unique experiment name: `experiment_prefix` + sample alias (e.g. `BGE_BSNTN2426-24`). A sample with more than one read set gets one experiment per read set: `BGE_<alias>_1`, `BGE_<alias>_2`, … (numbered in samplesheet order)|
+|experiment_name| A unique experiment name: `experiment_prefix` + sample alias (e.g. `BGE_BSNTN2426-24`). A sample with replicates (several read sets) gets one experiment per replicate: `BGE_<alias>_1`, `BGE_<alias>_2`, … (numbered in samplesheet order)|
 |sequencing_platform| Sequencing platform used. [See ENA permitted values](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html#platform)|
 |sequencing_instrument|Sequencing instrument used. [See ENA permitted values](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html#instrument)| 
 |library_source| Source molecule, e.g., `GENOMIC` [See ENA permitted values](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html#source)| 
@@ -271,8 +271,18 @@ A CSV with one row per read set:
 | `uploaded file 2` | Yes | R2 FASTQ (`.fastq.gz`): an absolute path, or a path relative to `upload_dir` |
 | `library_description` | No | Overrides the default library description for that row |
 
-- The samplesheet can include samples that are not registered yet (e.g. still waiting for taxids to be minted). They are set aside, not submitted (see Step 4).
-- A sample can have several rows, e.g. when it was sequenced more than once. Each row with different FASTQs becomes its own experiment, `BGE_<alias>_1`, `BGE_<alias>_2`, …. Rows with the same alias **and** the same two FASTQs are exact duplicates: every copy is reported as a problem and none is submitted, so remove the extra copies and re-run.
+- The samplesheet can include samples that are not registered yet (e.g. still waiting for taxids to be minted). They are not submitted, and are listed in `_file_problems.csv` as `not registered` (see Step 4).
+- A sample can have several rows. There are two cases:
+  - **Replicate:** the same `sample_alias` with **different** FASTQs, e.g. a sample sequenced more than once. Every replicate is submitted as its own experiment, `BGE_<alias>_1`, `BGE_<alias>_2`, … (numbered in samplesheet order), and is listed in `_replicate_rows.csv`.
+  - **Duplicate:** the same `sample_alias` **and** the same `uploaded file 1` and `uploaded file 2`. The first copy is submitted. Each later copy is left out and listed in `_file_problems.csv` as `duplicate row`.
+
+  For example:
+
+  | Row | sample_alias | FASTQs | Result |
+  |---|---|---|---|
+  | 1 | EBGEP999-25 | YG-4378 … S1314_L006_R1/R2 | submitted as `BGE_EBGEP999-25_1` |
+  | 2 | EBGEP999-25 | YG-4379 … S226_L002_R1/R2 | submitted as `BGE_EBGEP999-25_2` (replicate) |
+  | 3 | EBGEP999-25 | same as row 2 | left out, in `_file_problems.csv` (duplicate of `BGE_EBGEP999-25_2`) |
 - FASTQs must be decompressed `.fastq.gz` files, not inside a `.tar`/`.tar.gz` archive.
 
 ### Step 3: Edit the settings in `submit_reads.R`
@@ -295,7 +305,7 @@ A CSV with one row per read set:
 upload_dir <- "/home/<user>/projects/nhm/museomix/BGE/ena_submission/ena-read-upload/ena_read_upload/non_BSNHM_skims-1/read_upload"
 ```
 
-`/mnt/shared/projects/nhm/museomix/BGE/seq_data/DataDelivery_…/…_R1_001.fastq.gz` becomes `../../…/mnt/shared/projects/nhm/museomix/BGE/seq_data/DataDelivery_…/…_R1_001.fastq.gz`. The script resolves symlinks in folder names, so the `../` part may be shorter than you expect. File names are kept as written. Paths that are already relative are left unchanged. The samplesheet itself is not modified, and `_pending.csv` keeps the paths as written.
+`/mnt/shared/projects/nhm/museomix/BGE/seq_data/DataDelivery_…/…_R1_001.fastq.gz` becomes `../../…/mnt/shared/projects/nhm/museomix/BGE/seq_data/DataDelivery_…/…_R1_001.fastq.gz`. The script resolves symlinks in folder names, so the `../` part may be shorter than you expect. File names are kept as written. Paths that are already relative are left unchanged. The samplesheet itself is not modified, and `_file_problems.csv` keeps the paths as written.
 
 ### Step 4: Run `submit_reads.R`
 
@@ -305,25 +315,37 @@ Rscript submit_reads.R
 
 The script:
 - rewrites absolute FASTQ paths relative to `upload_dir`;
-- numbers the read sets of samples with more than one samplesheet row (`_1`, `_2`, …) and reports exact duplicate rows;
-- joins the samplesheet to the Samples Report by sample alias, and sets aside samples that are not registered yet;
+- numbers replicates (`_1`, `_2`, …), and leaves out the later copies of duplicate rows;
+- joins the samplesheet to the Samples Report by sample alias. Rows whose alias is not in the report are left out as `not registered`, without checking their files;
 - checks each read set separately:
   - every FASTQ file exists, is not empty and is gzip-compressed;
   - R1 and R2 are different files;
   - no file is used by two read sets.
 
   If one read set of a sample fails, that sample's other read sets are still submitted;
-- writes the outputs below, and prints `upload_dir` (the `-d` to use), the number of paths converted, with an example, a warning about samples with several rows, and a summary of the counts.
+- writes the outputs below, and prints:
+  - `upload_dir` (the `-d` to use);
+  - the number of paths converted, with an example;
+  - warnings for replicates and duplicate rows;
+  - a summary of the counts;
+  - the first 10 FASTQ and duplicate problems.
 
 | Output | Contents |
 |---|---|
 | `sequence_submission.tsv` | The spreadsheet for `bulk_webincli.py`: one row per experiment (read set) of registered samples whose FASTQ files passed every check |
-| `sequence_submission_pending.csv` | Samplesheet rows not in the Samples Report (not registered yet). Re-run once they are registered |
-| `sequence_submission_file_problems.csv` | Read sets left out, with `sample_alias`, `experiment_name` and the reason: missing, empty or non-gzipped file, R1 = R2, file used by two read sets, or identical duplicate row |
-| `sequence_submission_duplicate_rows.csv` | Samples with more than one samplesheet row: number of rows, distinct read sets, identical duplicate rows, and the experiment names they get |
+| `sequence_submission_file_problems.csv` | Every samplesheet row left out. Columns: `sample_alias`, `experiment_name`, `uploaded file 1`, `uploaded file 2` (as written in the samplesheet), `problem_type` and `problem` (the reason). The `problem_type` values are listed below |
+| `sequence_submission_replicate_rows.csv` | Samples with replicates: number of samplesheet rows, number of replicates, duplicate rows left out, and the experiment names |
 | `sequence_submission_registered_no_reads.csv` | Registered samples with no row in the samplesheet (for information) |
 
-Check the summary counts, and fix anything in `sequence_submission_file_problems.csv` before continuing. The console shows only the first 10 problems, so open the CSV for the full list. Experiment numbers are assigned before the file checks, so a read set keeps its name when you re-run after fixing a file.
+`problem_type` in `sequence_submission_file_problems.csv`:
+
+| problem_type | Why | What to do |
+|---|---|---|
+| `not registered` | The `sample_alias` is not in the `alias` column of the Samples Report: not registered yet (e.g. waiting for a taxid, or a failed registration batch), registered after the report was downloaded, or registered under a different alias. The match ignores leading and trailing spaces, but is otherwise exact and case-sensitive | Register the samples, download a new Samples Report and re-run |
+| `FASTQ problem` | Missing, empty or non-gzipped file, R1 = R2, or a file used by two read sets | Fix the file or the samplesheet path and re-run |
+| `duplicate row` | Identical to an earlier row; the first copy was submitted | Nothing; remove the extra copy from the samplesheet if you like |
+
+Check the summary counts before continuing. The console shows only the first 10 FASTQ and duplicate problems, so open the CSV for the full list. Experiment numbers are assigned before the file checks, so a read set keeps its name when you re-run after fixing a file.
 
 ### Step 5: Validate
 
@@ -342,9 +364,9 @@ To submit the manifests and upload the reads, change `-m validate` to `-m submit
 python /path/to/ena-bulk-webincli/bulk_webincli.py -u Webin-XXXXX -p 'XXXXXX' -g reads -s sequence_submission.tsv -m submit -d /path/to/upload_dir --webinCliPath /path/to/ena-bulk-webincli/webin-cli-9.0.1.jar
 ```
 
-Keep the reports and receipts written by the tool. You can submit the samples in `sequence_submission_pending.csv` later:
+Keep the reports and receipts written by the tool. You can submit the `not registered` rows in `sequence_submission_file_problems.csv` later:
 1. Once they are registered, download a new Samples Report.
-2. Re-run `submit_reads.R` with a samplesheet that contains just those samples.
+2. Re-run `submit_reads.R` with a samplesheet that contains just those rows. You can use the problems file itself as that samplesheet, filtered to the `not registered` rows: the extra columns are ignored.
 
 
 ## Mitogenome assembly submissions
