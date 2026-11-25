@@ -1,5 +1,5 @@
 # ENA SUBMISSIONS SOP
-**Date:** 2026-11-17
+**Date:** 2026-11-25
 
 **Author:** Maria Kamouyiaros & Dan Parsons @NHMUK
 
@@ -59,13 +59,14 @@ With a guide on how to register available [here](https://ena-docs.readthedocs.io
 
 **4. An install of R (v >4.3.0)**
 - This can be on any operating system you like
-- Packages: dplyr and plyr (for `sample_registration.R`); `submit_reads.R` uses base R only
+- `02_submit_reads.R` uses base R only (no packages needed)
 
 **5. An install of Python (v >3.11)**
 - Many scripts (e.g., ENA bulk webin-cli and assess_mitogenomes.py) require python to run (run with Python v3.12.8)
 
 **6. An install of ENA bulk webin-cli**
-- This is available for install with associated information [here](https://github.com/enasequence/ena-bulk-webincli/tree/master)
+- This is available for install with associated information [here](https://github.com/enasequence/ena-bulk-webincli/tree/master), together with a [Webin-CLI](https://github.com/enasequence/webin-cli/releases) `.jar` (tested with 11.0.0) and Java
+- With Webin-CLI 11, apply [bulk_webincli.patch](bulk_webincli.patch) to `bulk_webincli.py` (see `Sequencing read submission`, Step 5)
 
 **7. Access to skim2mito outputs**
 - This is generated as part of the UKBOL Accelerated pipeline, where [skim2mito](https://github.com/o-william-white/skim2mito) was run on all samples, with outputs sent to a single parent directory called `skim2mito_outputs`
@@ -189,15 +190,20 @@ Then use `https://www.ebi.ac.uk/ena/submit/drop-box/submit/` for the real submis
 
 ## Sequencing read submission 
 
-Paired-end reads are submitted with the [ena bulk webincli tool](https://github.com/enasequence/ena-bulk-webincli/tree/master). It takes a single TSV (one row per experiment, i.e. per read set), generates a [manifest file](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html) for each row, and validates or submits the manifests and read files. The TSV is built with [submit_reads.R](submit_reads.R).
+Paired-end reads are submitted in two steps:
 
-**Submission TSV fields** (written by `submit_reads.R`):
+| Script | What it does |
+|---|---|
+| [02_submit_reads.R](02_submit_reads.R) | Joins a samplesheet of FASTQ paths to the ENA Samples Report, checks every FASTQ file, and writes the submission TSV (one row per experiment, i.e. per read set) |
+| [03_ena_bulk_webincli.sh](03_ena_bulk_webincli.sh) | SLURM job that runs the [ena bulk webincli tool](https://github.com/enasequence/ena-bulk-webincli/tree/master) on that TSV. The tool writes a [manifest file](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html) for each row and calls Webin-CLI. It is run **twice**: first with `MODE="validate"`, then, once every row has passed, with `MODE="submit"` |
+
+**Submission TSV fields** (written by `02_submit_reads.R`):
 
 |Value| Description |
 |---|---|
 |study_accession| Project (study) accession number, e.g. `PRJEBXXXXX`|
 |sample_accession| Sample accession from ENA, taken from the Webin Samples Report | 
-|experiment_name| A unique experiment name: `experiment_prefix` + sample alias (e.g. `BGE_BSNTN2426-24`). A sample with more than one read set gets one experiment per read set: `BGE_<alias>_1`, `BGE_<alias>_2`, … (numbered in samplesheet order)|
+|experiment_name| A unique experiment name: `experiment_prefix` + sample alias (e.g. `BGE_BSNTN2426-24`). A sample with replicates gets one experiment per replicate: `BGE_<alias>_1`, `BGE_<alias>_2`, … (numbered in samplesheet order)|
 |sequencing_platform| Sequencing platform used. [See ENA permitted values](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html#platform)|
 |sequencing_instrument|Sequencing instrument used. [See ENA permitted values](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html#instrument)| 
 |library_source| Source molecule, e.g., `GENOMIC` [See ENA permitted values](https://ena-docs.readthedocs.io/en/latest/submit/reads/webin-cli.html#source)| 
@@ -229,80 +235,187 @@ A CSV with one row per read set:
 | `uploaded file 2` | Yes | R2 FASTQ (`.fastq.gz`): an absolute path, or a path relative to `upload_dir` |
 | `library_description` | No | Overrides the default library description for that row |
 
-- The samplesheet can include samples that are not registered yet (e.g. still waiting for taxids to be minted). They are set aside, not submitted (see Step 4).
-- A sample can have several rows, e.g. when it was sequenced more than once. Each row with different FASTQs becomes its own experiment, `BGE_<alias>_1`, `BGE_<alias>_2`, …. Rows with the same alias **and** the same two FASTQs are exact duplicates: every copy is reported as a problem and none is submitted, so remove the extra copies and re-run.
+- The samplesheet can include samples that are not registered yet (e.g. still waiting for taxids to be minted). They are not submitted, and are listed in `_file_problems.csv` as `not registered` (see Step 4 and Step 8).
 - FASTQs must be decompressed `.fastq.gz` files, not inside a `.tar`/`.tar.gz` archive.
+- A sample can have several rows. There are two cases:
+  - **Replicate:** the same `sample_alias` with **different** FASTQs, e.g. a sample sequenced more than once. Every replicate is submitted as its own experiment, `BGE_<alias>_1`, `BGE_<alias>_2`, … (numbered in samplesheet order), and is listed in `_replicate_rows.csv`.
+  - **Duplicate:** the same `sample_alias` **and** the same `uploaded file 1` and `uploaded file 2`. The first copy is submitted. Each later copy is left out and listed in `_file_problems.csv` as `duplicate row`.
 
-### Step 3: Edit the settings in `submit_reads.R`
+  For example:
+
+  | Row | sample_alias | FASTQs | Result |
+  |---|---|---|---|
+  | 1 | EBGEP999-25 | YG-4378 … S1314_L006_R1/R2 | submitted as `BGE_EBGEP999-25_1` |
+  | 2 | EBGEP999-25 | YG-4379 … S226_L002_R1/R2 | submitted as `BGE_EBGEP999-25_2` (replicate) |
+  | 3 | EBGEP999-25 | same as row 2 | left out, in `_file_problems.csv` (duplicate of `BGE_EBGEP999-25_2`) |
+
+### Step 3: Edit the settings in `02_submit_reads.R`
 
 | Setting | Description |
 |---|---|
 | `samplesheet_file` | The samplesheet from Step 2 |
 | `samples_report_file` | The Samples Report from Step 1 |
-| `output_prefix` | Prefix for the output files (default `sequence_submission`) |
-| `upload_dir` | The directory you will pass to `bulk_webincli.py` with `-d` (see below) |
+| `output_prefix` | Prefix for the output files (default `read_submission`) |
+| `upload_dir` | The directory you will give to `bulk_webincli.py` with `-d`, i.e. `OUTPUT_DIR` in `03_ena_bulk_webincli.sh` (see below) |
 | `study_accession` | Your project accession (`PRJEB...`) |
-| `experiment_prefix` | Prefix for `experiment_name` (default `BGE_`) |
-| `sequencing_platform`, `sequencing_instrument` | e.g. `ELEMENT` / `Element AVITI`, or `ILLUMINA` / `Illumina NovaSeq 6000` |
+| `experiment_prefix` | Prefix for `experiment_name`, e.g. `BGE_` |
+| `sequencing_platform`, `sequencing_instrument` | e.g. `ILLUMINA` / `Illumina NovaSeq X`, or `ELEMENT` / `Element AVITI` |
 | `library_source`, `library_selection`, `library_strategy` | e.g. `GENOMIC` / `RANDOM` / `WGS` for genome skims |
 | `default_library_description` | Used when the samplesheet has no `library_description` |
 
-**`upload_dir` and FASTQ paths.** `bulk_webincli.py` passes `-d` to Webin-CLI as the input directory, and every FASTQ path in the TSV must be relative to it. `bulk_webincli.py` also writes its `manifests/` and `submissions/` folders and `failed_validation.txt` into `-d`. A convenient choice is the directory you run the upload from. `submit_reads.R` rewrites every absolute path in the samplesheet relative to `upload_dir`, adding `../` where needed. For example, with
+**`upload_dir` and FASTQ paths.**
+- `bulk_webincli.py` passes `-d` to Webin-CLI as the input directory, and every FASTQ path in the TSV must be relative to it.
+- `bulk_webincli.py` also writes its `manifests/` and `submissions/` folders and its failure file into `-d`. A convenient choice is a `read_upload` folder next to your outputs.
+- `02_submit_reads.R` rewrites every absolute path in the samplesheet relative to `upload_dir`, adding `../` where needed. For example, with `upload_dir` set to `…/non_BSNHM_skims-1/read_upload`, `/mnt/shared/projects/nhm/museomix/BGE/seq_data/DataDelivery_…/…_R1_001.fastq.gz` becomes `../../../../../seq_data/DataDelivery_…/…_R1_001.fastq.gz`.
+- The script resolves symlinks in folder names, so the `../` part may be shorter than you expect.
+- File names are kept as written, and paths that are already relative are left unchanged.
+- The samplesheet itself is not modified, and `_file_problems.csv` keeps the paths as written.
+
+> **`-d` must be exactly `upload_dir`.** The `../` paths only resolve from that directory. If `-d` is a different folder, even a sub-folder such as `read_upload/validated`, every row fails with `ERROR: Could not read data file`.
+
+### Step 4: Run `02_submit_reads.R`
 
 ```
-upload_dir <- "/home/<user>/projects/nhm/museomix/BGE/ena_submission/ena-read-upload/ena_read_upload/non_BSNHM_skims-1/read_upload"
-```
-
-`/mnt/shared/projects/nhm/museomix/BGE/seq_data/DataDelivery_…/…_R1_001.fastq.gz` becomes `../../…/mnt/shared/projects/nhm/museomix/BGE/seq_data/DataDelivery_…/…_R1_001.fastq.gz`. The script resolves symlinks in folder names, so the `../` part may be shorter than you expect. File names are kept as written. Paths that are already relative are left unchanged. The samplesheet itself is not modified, and `_pending.csv` keeps the paths as written.
-
-### Step 4: Run `submit_reads.R`
-
-```
-Rscript submit_reads.R
+Rscript 02_submit_reads.R
 ```
 
 The script:
 - rewrites absolute FASTQ paths relative to `upload_dir`;
-- numbers the read sets of samples with more than one samplesheet row (`_1`, `_2`, …) and reports exact duplicate rows;
-- joins the samplesheet to the Samples Report by sample alias, and sets aside samples that are not registered yet;
+- numbers replicates (`_1`, `_2`, …), and leaves out the later copies of duplicate rows;
+- joins the samplesheet to the Samples Report by sample alias. Rows whose alias is not in the report are left out as `not registered`, without checking their files;
 - checks each read set separately:
   - every FASTQ file exists, is not empty and is gzip-compressed;
   - R1 and R2 are different files;
   - no file is used by two read sets.
 
   If one read set of a sample fails, that sample's other read sets are still submitted;
-- writes the outputs below, and prints `upload_dir` (the `-d` to use), the number of paths converted, with an example, a warning about samples with several rows, and a summary of the counts.
+- writes the outputs below, and prints:
+  - `upload_dir` (the `-d` to use);
+  - the number of paths converted, with an example;
+  - warnings for replicates and duplicate rows;
+  - a summary of the counts;
+  - the first 10 FASTQ and duplicate problems.
 
 | Output | Contents |
 |---|---|
-| `sequence_submission.tsv` | The spreadsheet for `bulk_webincli.py`: one row per experiment (read set) of registered samples whose FASTQ files passed every check |
-| `sequence_submission_pending.csv` | Samplesheet rows not in the Samples Report (not registered yet). Re-run once they are registered |
-| `sequence_submission_file_problems.csv` | Read sets left out, with `sample_alias`, `experiment_name` and the reason: missing, empty or non-gzipped file, R1 = R2, file used by two read sets, or identical duplicate row |
-| `sequence_submission_duplicate_rows.csv` | Samples with more than one samplesheet row: number of rows, distinct read sets, identical duplicate rows, and the experiment names they get |
-| `sequence_submission_registered_no_reads.csv` | Registered samples with no row in the samplesheet (for information) |
+| `read_submission.tsv` | The spreadsheet for `bulk_webincli.py`: one row per experiment (read set) of registered samples whose FASTQ files passed every check |
+| `read_submission_file_problems.csv` | Every samplesheet row left out. Columns: `sample_alias`, `experiment_name`, `uploaded file 1`, `uploaded file 2` (as written in the samplesheet), `problem_type` and `problem` (the reason). The `problem_type` values are listed below |
+| `read_submission_replicate_rows.csv` | Samples with replicates: number of samplesheet rows, number of replicates, duplicate rows left out, and the experiment names |
+| `read_submission_registered_no_reads.csv` | Registered samples with no row in the samplesheet (for information) |
 
-Check the summary counts, and fix anything in `sequence_submission_file_problems.csv` before continuing. The console shows only the first 10 problems, so open the CSV for the full list. Experiment numbers are assigned before the file checks, so a read set keeps its name when you re-run after fixing a file.
+`problem_type` in `read_submission_file_problems.csv`:
 
-### Step 5: Validate
+| problem_type | Why | What to do |
+|---|---|---|
+| `not registered` | The `sample_alias` is not in the `alias` column of the Samples Report: not registered yet (e.g. waiting for a taxid, or a failed registration batch), registered after the report was downloaded, or registered under a different alias. The match ignores leading and trailing spaces, but is otherwise exact and case-sensitive | Register the samples, download a new Samples Report and re-run (Step 8) |
+| `FASTQ problem` | Missing, empty or non-gzipped file, R1 = R2, or a file used by two read sets | Fix the file or the samplesheet path and re-run |
+| `duplicate row` | Identical to an earlier row; the first copy was submitted | Nothing; remove the extra copy from the samplesheet if you like |
 
-First validate a TSV with a single row: copy the header and one data line into `test.tsv`. This confirms that Webin-CLI finds the files through the relative paths. Then validate the full TSV. Validation generates the manifests and checks the TSV and read files without submitting anything. Run the commands from `upload_dir`, or give the TSV's full path with `-s`:
+The run's counts add up: rows written + rows in `_file_problems.csv` = samplesheet rows. The TSV usually has more experiments than samples, because each replicate is its own experiment.
+
+Check the summary before continuing. The console shows only the first 10 FASTQ and duplicate problems, so open the CSV for the full list. Experiment numbers are assigned before the file checks, so a read set keeps its name when you re-run after fixing a file.
+
+### Step 5: Set up `03_ena_bulk_webincli.sh`
+
+**Patch `bulk_webincli.py` (once).** The upstream `bulk_webincli.py` looks for an old Webin-CLI success message. With Webin-CLI 11 it therefore logs every run as `VALIDATION FAILED`, including the ones that passed. [bulk_webincli.patch](bulk_webincli.patch) fixes this:
+- **Validate:** a run passes on Webin-CLI 11's `Submission(s) validated successfully.`
+- **Submit:** a run passes on `The submission has been completed successfully. The following … accession was assigned`. A submission with no accession assigned is marked FAILED.
+- **Errors:** any `ERROR:` line marks the run FAILED.
+- **Labels and failure files:** submit runs are logged as `SUBMISSION SUCCESSFUL/FAILED` and written to `failed_submission.txt`. Validate runs keep `failed_validation.txt`.
+- **Password:** your password is masked (`********`) in the printed commands, so it is no longer written to the job log.
+
+Apply it from the `ena-bulk-webincli` folder, then check it:
+```bash
+cp bulk_webincli.py bulk_webincli.py.bak
+patch bulk_webincli.py < /path/to/ena_read_upload/bulk_webincli.patch
+grep -n 'SUCCESS_MESSAGES\|"\*\*\*\*\*\*\*\*"' bulk_webincli.py
 ```
-python /path/to/ena-bulk-webincli/bulk_webincli.py -u Webin-XXXXX -p 'XXXXXX' -g reads -s sequence_submission.tsv -m validate -d /path/to/upload_dir --webinCliPath /path/to/ena-bulk-webincli/webin-cli-9.0.1.jar
-```
+The `grep` should list the `SUCCESS_MESSAGES` lines and the masking line. Re-apply the patch after updating or reinstalling ena-bulk-webincli.
 
-**NOTE** Set the paths to `bulk_webincli.py` and the Webin-CLI `.jar` for your own install, and give your Webin login details (`-u` and `-p`). Put the password in single quotes, because the shell otherwise interprets characters such as `!`. `-d` must be the same directory as `upload_dir` in `submit_reads.R` (the script prints it). Run from a machine with internet access; HPC compute nodes often have none.
+**Edit the variables at the top of `03_ena_bulk_webincli.sh`:**
 
-### Step 6: Submit
+| Variable | Description |
+|---|---|
+| `ENA_BULK_WEBINCLI` | Path to the patched `bulk_webincli.py` |
+| `ENA_WEBINCLI_JAR` | Path to the Webin-CLI `.jar` (tested with `webin-cli-11.0.0.jar`) |
+| `ENA_ACCOUNT` | Your Webin account, `Webin-XXXXX` |
+| `ENA_PASSWORD` | Your Webin password, in **single quotes** so characters such as `!` and `$` are kept as typed. The tool passes the password to Webin-CLI through a shell, so a password containing spaces, `;`, `&` or quotes will not work |
+| `INPUT_SHEET` | `read_submission.tsv` from Step 4 (full path) |
+| `OUTPUT_DIR` | `-d`: must be the same directory as `upload_dir` in `02_submit_reads.R` (the script prints it) |
+| `MODE` | `validate` (Step 6), then `submit` (Step 7) |
 
-To submit the manifests and upload the reads, change `-m validate` to `-m submit`:
+**Notes:**
+- The job activates the `ena` conda environment with `eval "$(conda shell.bash hook)"`; `conda init` does not work inside a batch job.
+- The compute node needs internet access to ENA. Submit mode also uploads every FASTQ by FTP, so check that FTP is allowed, or use the tool's `-a` (Aspera) option if `ascp` is installed.
+- Set a generous SLURM time limit. Validation reads every FASTQ in full, and submission also uploads them.
+- Run the job from the directory where you want `bulk_webincli.out`/`.err`: `sbatch 03_ena_bulk_webincli.sh`.
+- Don't share the job logs: they include your account name and the Webin-CLI output.
 
-```
-python /path/to/ena-bulk-webincli/bulk_webincli.py -u Webin-XXXXX -p 'XXXXXX' -g reads -s sequence_submission.tsv -m submit -d /path/to/upload_dir --webinCliPath /path/to/ena-bulk-webincli/webin-cli-9.0.1.jar
-```
+### Step 6: Validate (`MODE="validate"`)
 
-Keep the reports and receipts written by the tool. You can submit the samples in `sequence_submission_pending.csv` later:
-1. Once they are registered, download a new Samples Report.
-2. Re-run `submit_reads.R` with a samplesheet that contains just those samples.
+Validation generates the manifests and checks the metadata and read files. Nothing is submitted.
+
+1. **One-row test first.** This confirms that Webin-CLI finds the files through the relative paths:
+   ```bash
+   head -n 2 read_submission.tsv > read_upload/test.tsv
+   ```
+   Set `INPUT_SHEET` to `test.tsv`, `sbatch 03_ena_bulk_webincli.sh`, and check that the `.out` file in `read_upload/manifests/*-report/` says `VALIDATION SUCCESSFUL`.
+2. **Then the full TSV.** Delete the test's `manifests/`, `submissions/` and `failed_validation.txt` first: the failure file is added to on every run, not overwritten. Then set `INPUT_SHEET` back to `read_submission.tsv` and run the job again.
+3. **Check the result**, from `read_upload`.
+
+   Number that passed (should equal the number of rows in `read_submission.tsv`):
+   ```bash
+   grep -rl --include='*.out' "VALIDATION SUCCESSFUL" manifests | wc -l
+   ```
+   Number that failed (should be 0; also check that `failed_validation.txt` is empty or missing):
+   ```bash
+   grep -rl --include='*.err' "^ERROR:" manifests | wc -l
+   ```
+   If any failed, count the error types:
+   ```bash
+   grep -rh --include='*.err' "^ERROR:" manifests | sed -E 's/"[^"]*"/"…"/g; s/\[manifest file.*//' | sort | uniq -c | sort -rn
+   ```
+
+The logback `INFO`/`WARN` lines at the start of every Webin-CLI log are start-up messages and can be ignored. The shared `submissions/webin-cli.report` is overwritten by each row, so it only shows the last one. Use the per-row reports in `manifests/*-report/`.
+
+**Only continue to Step 7 when every row has passed.** Fix any failures (usually in the samplesheet, then re-run Step 4) and validate again.
+
+### Step 7: Submit (`MODE="submit"`)
+
+Submission uploads the FASTQs and registers the experiments and runs. It can't be undone from your side; removing runs needs the ENA helpdesk.
+
+1. **Clear the validate outputs.** Delete `manifests/`, `submissions/` and `failed_validation.txt` in `read_upload`.
+2. **One-row submit first.** Use `INPUT_SHEET` = `test.tsv` and `MODE="submit"`. Check that its `.out` file says `SUBMISSION SUCCESSFUL` and shows the assigned accession, and that the experiment and run appear in the Webin portal (Experiments, Runs). This also confirms the node can upload by FTP.
+3. **Then the full TSV.** Remove that row from `read_submission.tsv` first, because it has already been submitted. Then run the job with `MODE="submit"`.
+4. **Check the result**, from `read_upload`.
+
+   Both counts should equal the number of rows submitted:
+   ```bash
+   grep -rl --include='*.out' "SUBMISSION SUCCESSFUL" manifests | wc -l
+   ```
+   ```bash
+   grep -rh --include='*.out' "accession was assigned" manifests | wc -l
+   ```
+   Any failures are in `failed_submission.txt`.
+
+- **If the job stops partway:** you can re-run with a TSV of only the failed or unsubmitted rows. ENA identifies experiments and runs by name within your account, so a row that already went through is reported as an error rather than submitted twice. Check the wording in `failed_submission.txt`.
+- **When the runs become public:** they follow the release date of the study. If the study is already public, the reads become public once ENA has processed them.
+- **Keep the logs:** keep `manifests/*-report/*.out` (the accessions) and the receipts in `submissions/`.
+
+### Step 8: Later submissions (samples registered later)
+
+Rows with `problem_type` = `not registered` are not lost. Once those samples have taxids and are registered (via the taxid-minting workflow and `01_tol_checklist_formatter.py`), submit their reads the same way:
+
+1. Filter them out of the problems file, which can be used directly as the next samplesheet (the extra columns are ignored). Copy it before re-running 02, because a re-run with the same `output_prefix` overwrites `read_submission_file_problems.csv`:
+   ```bash
+   awk -F'","' 'NR==1 || $5=="not registered"' read_submission_file_problems.csv > not_registered_samplesheet.csv
+   ```
+   To split by project prefix, e.g. samples for a separate BSNHM submission:
+   ```bash
+   awk -F'","' 'NR==1 || ($5=="not registered" && $1 ~ /^"BSNHM/)' read_submission_file_problems.csv > bsnhm_samplesheet.csv
+   ```
+2. Download a new Samples Report after the registrations.
+3. Run Steps 3–7 again with these files. Use a new `output_prefix` and a new `upload_dir`/`OUTPUT_DIR`, so the earlier outputs and logs are kept.
 
 
 ## Mitogenome assembly submissions
