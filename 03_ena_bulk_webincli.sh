@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=bulk_webincli-validate
+#SBATCH --job-name=bulk_webincli
 #SBATCH --partition=long
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=8
@@ -7,9 +7,8 @@
 #SBATCH --output=%x.out
 
 
-# Activate conda env
-conda init
-
+# Activate conda env ('conda init' does not work inside a batch job)
+eval "$(conda shell.bash hook)"
 conda activate ena
 
 
@@ -22,25 +21,21 @@ conda activate ena
 
 
 # Paths and variables
-ENA_BULK_WEBINCLI="/path/to/ena-bulk-webincli/bulk_webincli.py"
+ENA_BULK_WEBINCLI="/path/to/ena-bulk-webincli/bulk_webincli.py"   # patched with bulk_webincli.patch
 ENA_WEBINCLI_JAR="/path/to/webin-cli/webin-cli-X.X.X.jar"
 
 ENA_ACCOUNT="Webin-XXXXX"
-ENA_PASSWORD="XXXXXXX"
+ENA_PASSWORD='XXXXXXX'
 
-INPUT_SHEET="/path/to/read_submission.tsv"
-OUTPUT_DIR="/path/to/read_upload/"
+INPUT_SHEET="/path/to/read_submission.tsv"   # TSV written by 02_submit_reads.R
+OUTPUT_DIR="/path/to/read_upload/"           # must be upload_dir in 02_submit_reads.R
 
-MODE="validate"
+MODE="validate"   # validate first; change to "submit" only when every row has passed
 
 
 # Run
-python $ENA_BULK_WEBINCLI \
-	-u $ENA_ACCOUNT -p $ENA_PASSWORD \
-	-g reads -s $INPUT_SHEET \
-	-m $MODE -pc 8 -d $OUTPUT_DIR \
-	--webinCliPath $ENA_WEBINCLI_JAR
-
-
-
-
+python "$ENA_BULK_WEBINCLI" \
+	-u "$ENA_ACCOUNT" -p "$ENA_PASSWORD" \
+	-g reads -s "$INPUT_SHEET" \
+	-m "$MODE" -pc 8 -d "$OUTPUT_DIR" \
+	--webinCliPath "$ENA_WEBINCLI_JAR"
