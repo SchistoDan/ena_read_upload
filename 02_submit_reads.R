@@ -44,14 +44,14 @@
 # ---------------------------------------------------------------------------
 # Settings - edit these
 # ---------------------------------------------------------------------------
-samplesheet_file    <- "/home/dparsons/projects/nhm/museomix/BGE/ena_submission/ena-read-upload/ena_read_upload/non_BSNHM_skims-1/read_upload/samplesheets/combined_samplesheet.csv"
-samples_report_file <- "/home/dparsons/projects/nhm/museomix/BGE/ena_submission/ena-read-upload/ena_read_upload/non_BSNHM_skims-1/sample_reg/nonBSNHM_BGE_sample_reg-2026-11-19.csv"
-output_prefix       <- "read_submission"
+samplesheet_file    <- "read_upload/samplesheets/combined_samplesheet.csv"
+samples_report_file <- "sample_reg/nonBSNHM_BGE_sample_reg-2026-11-19.csv"
+output_prefix       <- "read_manifest"
 
 # Parent directory of the FASTQ files: the same directory given to
 # bulk_webincli.py with -d. Paths in the samplesheet are relative to it
 # (absolute paths are used as they are).
-upload_dir <- "/home/dparsons/projects/nhm/museomix/BGE/ena_submission/ena-read-upload/ena_read_upload/non_BSNHM_skims-1/read_upload"
+upload_dir <- "read_upload"
 
 study_accession       <- "PRJEB78703"
 experiment_prefix     <- "BGE_"          # experiment_name = prefix + sample alias
