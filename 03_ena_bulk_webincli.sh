@@ -27,7 +27,7 @@ ENA_WEBINCLI_JAR="/path/to/webin-cli/webin-cli-X.X.X.jar"
 ENA_ACCOUNT="Webin-XXXXX"
 ENA_PASSWORD='XXXXXXX'
 
-INPUT_SHEET="/path/to/read_submission.tsv"   # TSV written by 02_submit_reads.R
+INPUT_SHEET="/path/to/read_manifest.tsv"   # TSV written by 02_submit_reads.R
 OUTPUT_DIR="/path/to/read_upload/"           # must be upload_dir in 02_submit_reads.R
 
 MODE="validate"   # validate first; change to "submit" only when every row has passed
